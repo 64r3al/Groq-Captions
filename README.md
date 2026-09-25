@@ -40,7 +40,8 @@ After Effects layers
 
 ## Project status
 
-The core transcription → synchronization → caption-building pipeline is implemented.
+The core transcription → synchronization → caption-building pipeline is implemented, and the
+panel UI has been redesigned around a premium, native-feeling component system (`src/js/main/ui/`).
 
 Current work is focused on expanding editing controls, presets, exports and the overall authoring experience.
 
@@ -53,6 +54,11 @@ npm run test
 npm run build
 npm run zxp
 ~~~
+
+`npm run dev` also serves the panel UI on its own in a plain browser (no After Effects
+needed): a dev-only mock host answers layer-selection and build calls with sample data, and
+appending `?gallery=1` to the URL opens a gallery of every UI component for visual QA.
+Neither is present in a packaged build.
 
 See the repository documentation for the complete setup, CEP configuration and testing workflow.
 
