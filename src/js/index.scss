@@ -1,20 +1,12 @@
-:root {
-  /* Sensible defaults matching AE's default dark UI; overwritten at runtime by
-   * src/js/lib/services/theme.ts to match whatever skin the host app is actually using. */
-  --gc-bg: #1e1e1e;
-  --gc-bg-alt: #2b2b2b;
-  --gc-panel: #262626;
-  --gc-input-bg: #1a1a1a;
-  --gc-fg: #e8e8e8;
-  --gc-fg-muted: #9a9a9a;
-  --gc-border: #3a3a3a;
-  --gc-accent: #3a8be0;
-  --gc-error: #e05252;
-  --gc-ok: #4caf7d;
-  --gc-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif;
-  --gc-font-size: 12px;
-}
+@use "./main/ui/tokens";
+@use "./main/ui/mixins";
+@use "./main/ui/_inter-font-face";
+@use "./main/ui/primitives";
+@use "./main/features/features";
+
+// Global resets and the few truly page-level rules. Every actual component's styling lives in
+// src/js/main/ui/ (primitives) or alongside its own component (features) — this file just sets
+// up the box model, base typography, and scrollbars once for the whole document.
 
 * {
   box-sizing: border-box;
@@ -24,70 +16,27 @@ html,
 body {
   margin: 0;
   height: 100%;
-  background: var(--gc-bg);
-  color: var(--gc-fg);
+  background: var(--gc-surface-0);
+  color: var(--gc-text-primary);
   font-family: var(--gc-font-family);
   font-size: var(--gc-font-size);
+  line-height: var(--gc-line-height);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-button {
-  font: inherit;
-  cursor: pointer;
-  border: 1px solid var(--gc-border);
-  background: var(--gc-bg-alt);
-  color: var(--gc-fg);
-  border-radius: 4px;
-  padding: 6px 12px;
-}
-
-button:hover:not(:disabled) {
-  border-color: var(--gc-accent);
-}
-
-button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-
-button.secondary {
-  background: transparent;
-}
-
-button.small {
-  padding: 2px 8px;
-  font-size: 0.9em;
-}
-
-input,
-select {
-  font: inherit;
-  background: var(--gc-input-bg);
-  color: var(--gc-fg);
-  border: 1px solid var(--gc-border);
-  border-radius: 4px;
-  padding: 5px 8px;
-}
-
-input:focus,
-select:focus {
-  outline: none;
-  border-color: var(--gc-accent);
+body {
+  @include mixins.custom-scrollbar;
 }
 
 code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, "Courier New", monospace;
+  font-size: 0.95em;
 }
 
-::-webkit-scrollbar {
-  width: 10px;
-}
-
-::-webkit-scrollbar-track {
-  background: var(--gc-bg);
-}
-
-::-webkit-scrollbar-thumb {
-  background: var(--gc-border);
-  border-radius: 5px;
+// A visible focus ring only for keyboard navigation (see ui/mixins.scss#focus-ring) - this
+// covers any native element that doesn't go through a ui/ primitive.
+:focus-visible {
+  outline: none;
+  box-shadow: var(--gc-shadow-focus);
 }

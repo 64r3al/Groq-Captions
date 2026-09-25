@@ -1,0 +1,162 @@
+@use "../ui/mixins";
+
+// ==========================================================================================
+// Waveform (decorative)
+// ==========================================================================================
+.gc-waveform {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 32px;
+}
+
+.gc-waveform-bar {
+  flex: 1;
+  min-width: 2px;
+  background: var(--gc-accent-wash);
+  border-radius: 2px;
+}
+
+// ==========================================================================================
+// Caption preview canvas
+// ==========================================================================================
+.gc-preview-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--gc-radius-card);
+  overflow: hidden;
+  background:
+    linear-gradient(135deg, var(--gc-surface-2) 0%, var(--gc-surface-3) 100%);
+  border: 1px solid var(--gc-border);
+}
+
+.gc-preview-caption-row {
+  position: absolute;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35em;
+  max-width: 90%;
+  font-family: inherit;
+  font-weight: var(--gc-weight-semibold);
+}
+
+.gc-preview-word {
+  @include mixins.transition(transform, color);
+  display: inline-block;
+  line-height: 1;
+}
+
+.gc-preview-word--pop {
+  animation: gc-preview-pop var(--gc-duration-slow) var(--gc-ease-out);
+}
+
+@keyframes gc-preview-pop {
+  0% {
+    transform: scale(0.85);
+  }
+  60% {
+    transform: scale(1.12);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gc-preview-word--pop {
+    animation: none;
+  }
+}
+
+// ==========================================================================================
+// Preset gallery
+// ==========================================================================================
+.gc-preset-gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(84px, 1fr));
+  gap: var(--gc-space-2);
+}
+
+.gc-preset-card {
+  @include mixins.focus-ring;
+  @include mixins.transition(border-color, background-color);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--gc-space-1);
+  background: var(--gc-surface-1);
+  border: 1px solid var(--gc-border);
+  border-radius: var(--gc-radius-control);
+  padding: var(--gc-space-2);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--gc-text-muted);
+    background: var(--gc-surface-2);
+  }
+}
+
+.gc-preset-card--active {
+  border-color: var(--gc-accent);
+  box-shadow: 0 0 0 1px var(--gc-accent);
+}
+
+.gc-preset-swatch {
+  font-size: 20px;
+  font-weight: var(--gc-weight-semibold);
+  line-height: 1;
+}
+
+.gc-preset-name {
+  font-size: var(--gc-text-2xs);
+  color: var(--gc-text-secondary);
+  text-align: center;
+}
+
+// ==========================================================================================
+// Transcript editor
+// ==========================================================================================
+.gc-transcript {
+  display: flex;
+  flex-direction: column;
+  max-height: 320px;
+  overflow-y: auto;
+  @include mixins.custom-scrollbar;
+}
+
+.gc-transcript-row {
+  display: flex;
+  align-items: baseline;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-2) 0;
+  border-bottom: 1px solid var(--gc-border);
+  content-visibility: auto;
+  contain-intrinsic-size: 0 44px;
+
+  &:last-child {
+    border-bottom: none;
+  }
+}
+
+.gc-transcript-time {
+  flex-shrink: 0;
+  width: 44px;
+  font-size: var(--gc-text-2xs);
+  color: var(--gc-text-muted);
+}
+
+.gc-transcript-words {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3em;
+  font-size: var(--gc-text-sm);
+  line-height: var(--gc-line-height);
+}
+
+.gc-transcript-chip {
+  color: var(--gc-text-primary);
+}

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Wand2 } from "lucide-react";
 import { evalTS } from "../../lib/utils/bolt";
 import { findFfmpeg } from "../../lib/services/ffmpeg";
 import { refineOnsets } from "../../lib/services/onset";
@@ -16,9 +17,16 @@ import type {
   SelectedAudioLayerInfo,
   TranscriptWord,
 } from "../../../shared/types";
-
-const hexToInt = (hex: string): number => parseInt(hex.replace("#", ""), 16);
-const intToHex = (n: number): string => `#${n.toString(16).padStart(6, "0")}`;
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
+import { Select } from "../ui/Select";
+import { Toggle } from "../ui/Toggle";
+import { NumberScrubber } from "../ui/NumberScrubber";
+import { ColorSwatch } from "../ui/ColorSwatch";
+import { InlineError } from "../ui/InlineError";
+import { CollapsibleSection } from "../ui/SectionHeader";
+import { CaptionPreviewCanvas } from "../features/CaptionPreviewCanvas";
+import { PresetGallery } from "../features/PresetGallery";
 
 export const CaptionBuilder = ({
   selection,
@@ -51,10 +59,43 @@ export const CaptionBuilder = ({
   const [pop, setPop] = useState(DEFAULT_CAPTION_STYLE.pop);
   const [shadow, setShadow] = useState(DEFAULT_CAPTION_STYLE.shadow);
 
+  const [styleOpen, setStyleOpen] = useState(true);
+  const [activePresetId, setActivePresetId] = useState<string | null>(null);
+
   const [busy, setBusy] = useState(false);
   const [statusText, setStatusText] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [result, setResult] = useState<BuildCaptionsResult | null>(null);
+
+  // Live style object for the preview canvas and the preset gallery - purely UI-layer, reads
+  // the same state this component already builds captions from, sets nothing new.
+  const currentStyle = {
+    font,
+    size,
+    textColor,
+    highlightColor,
+    strokeColor,
+    strokeWidth,
+    posIndex,
+    reveal,
+    highlight,
+    pop,
+    shadow,
+  };
+
+  const applyPreset = (preset: typeof currentStyle) => {
+    setFont(preset.font);
+    setSize(preset.size);
+    setTextColor(preset.textColor);
+    setHighlightColor(preset.highlightColor);
+    setStrokeColor(preset.strokeColor);
+    setStrokeWidth(preset.strokeWidth);
+    setPosIndex(preset.posIndex);
+    setReveal(preset.reveal);
+    setHighlight(preset.highlight);
+    setPop(preset.pop);
+    setShadow(preset.shadow);
+  };
 
   const handleBuild = async () => {
     setBusy(true);
@@ -131,157 +172,79 @@ export const CaptionBuilder = ({
   };
 
   return (
-    <section className="field-group">
-      <h3>Captions</h3>
+    <CollapsibleSection
+      title="Style"
+      subtitle={POSITION_OPTIONS[posIndex]?.label}
+      open={styleOpen}
+      onToggle={() => setStyleOpen((o) => !o)}
+    >
+      <CaptionPreviewCanvas style={currentStyle} />
 
-      <div className="row">
-        <label className="field small">
-          <span>Offset (frames)</span>
-          <input
-            type="number"
-            value={offsetFrames}
-            onChange={(e) => setOffsetFrames(Number(e.target.value) || 0)}
-          />
-        </label>
-        <label className="field small">
-          <span>Lead-in (frames)</span>
-          <input
-            type="number"
-            min={0}
-            value={leadInFrames}
-            onChange={(e) => setLeadInFrames(Math.max(0, Number(e.target.value) || 0))}
-          />
-        </label>
+      <PresetGallery
+        activeId={activePresetId}
+        onApply={(preset) => {
+          applyPreset(preset);
+          setActivePresetId(null);
+        }}
+      />
+
+      <div className="gc-field-row">
+        <NumberScrubber label="Offset" value={offsetFrames} onChange={setOffsetFrames} suffix="fr" />
+        <NumberScrubber label="Lead-in" value={leadInFrames} onChange={setLeadInFrames} min={0} suffix="fr" />
       </div>
-      <label className="row checkbox-row">
-        <input
-          type="checkbox"
-          checked={onsetRefinement}
-          disabled={!audioPath}
-          onChange={(e) => setOnsetRefinement(e.target.checked)}
+      <Toggle
+        checked={onsetRefinement}
+        onChange={setOnsetRefinement}
+        disabled={!audioPath}
+        label={`Refine word timing against the audio${!audioPath ? " (unavailable for this transcript)" : ""}`}
+      />
+
+      <div className="gc-field-row">
+        <NumberScrubber label="Words / caption" value={maxWords} onChange={setMaxWords} min={1} />
+        <NumberScrubber label="Chars / line" value={maxCharsPerLine} onChange={setMaxCharsPerLine} min={6} />
+      </div>
+      <Toggle checked={uppercase} onChange={setUppercase} label="UPPERCASE" />
+
+      <div className="gc-field-row">
+        <Input label="Font (PostScript name)" value={font} onChange={(e) => setFont(e.target.value)} />
+        <NumberScrubber label="Size" value={size} onChange={setSize} min={4} />
+      </div>
+      <div className="gc-field-row">
+        <ColorSwatch label="Text" value={textColor} onChange={setTextColor} />
+        <ColorSwatch label="Active word" value={highlightColor} onChange={setHighlightColor} />
+        <ColorSwatch label="Stroke" value={strokeColor} onChange={setStrokeColor} />
+      </div>
+      <div className="gc-field-row">
+        <NumberScrubber label="Stroke width" value={strokeWidth} onChange={setStrokeWidth} min={0} />
+        <Select
+          label="Position"
+          value={String(posIndex)}
+          onChange={(e) => setPosIndex(Number(e.target.value) as CaptionPositionIndex)}
+          options={POSITION_OPTIONS.map((opt, i) => ({ value: String(i), label: opt.label }))}
         />
-        <span>
-          Refine word timing against the audio{!audioPath ? " (unavailable for this transcript)" : ""}
-        </span>
-      </label>
-
-      <div className="row">
-        <label className="field small">
-          <span>Words / caption</span>
-          <input
-            type="number"
-            min={1}
-            value={maxWords}
-            onChange={(e) => setMaxWords(Math.max(1, Number(e.target.value) || 1))}
-          />
-        </label>
-        <label className="field small">
-          <span>Chars / line</span>
-          <input
-            type="number"
-            min={6}
-            value={maxCharsPerLine}
-            onChange={(e) => setMaxCharsPerLine(Math.max(6, Number(e.target.value) || 6))}
-          />
-        </label>
-      </div>
-      <label className="row checkbox-row">
-        <input type="checkbox" checked={uppercase} onChange={(e) => setUppercase(e.target.checked)} />
-        <span>UPPERCASE</span>
-      </label>
-
-      <div className="row">
-        <label className="field small">
-          <span>Font (PostScript name)</span>
-          <input type="text" value={font} onChange={(e) => setFont(e.target.value)} />
-        </label>
-        <label className="field small">
-          <span>Size</span>
-          <input
-            type="number"
-            min={4}
-            value={size}
-            onChange={(e) => setSize(Math.max(4, Number(e.target.value) || 4))}
-          />
-        </label>
-      </div>
-      <div className="row">
-        <label className="field small">
-          <span>Text color</span>
-          <input type="color" value={intToHex(textColor)} onChange={(e) => setTextColor(hexToInt(e.target.value))} />
-        </label>
-        <label className="field small">
-          <span>Active word</span>
-          <input
-            type="color"
-            value={intToHex(highlightColor)}
-            onChange={(e) => setHighlightColor(hexToInt(e.target.value))}
-          />
-        </label>
-        <label className="field small">
-          <span>Stroke</span>
-          <input
-            type="color"
-            value={intToHex(strokeColor)}
-            onChange={(e) => setStrokeColor(hexToInt(e.target.value))}
-          />
-        </label>
-      </div>
-      <div className="row">
-        <label className="field small">
-          <span>Stroke width</span>
-          <input
-            type="number"
-            min={0}
-            value={strokeWidth}
-            onChange={(e) => setStrokeWidth(Math.max(0, Number(e.target.value) || 0))}
-          />
-        </label>
-        <label className="field small">
-          <span>Position</span>
-          <select value={posIndex} onChange={(e) => setPosIndex(Number(e.target.value) as CaptionPositionIndex)}>
-            {POSITION_OPTIONS.map((opt, i) => (
-              <option key={opt.label} value={i}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </label>
       </div>
 
-      <div className="row button-row">
-        <label className="checkbox-row">
-          <input type="checkbox" checked={reveal} onChange={(e) => setReveal(e.target.checked)} />
-          <span>Word-by-word</span>
-        </label>
-        <label className="checkbox-row">
-          <input type="checkbox" checked={highlight} onChange={(e) => setHighlight(e.target.checked)} />
-          <span>Highlight active</span>
-        </label>
-        <label className="checkbox-row">
-          <input type="checkbox" checked={pop} onChange={(e) => setPop(e.target.checked)} />
-          <span>Pop in</span>
-        </label>
-        <label className="checkbox-row">
-          <input type="checkbox" checked={shadow} onChange={(e) => setShadow(e.target.checked)} />
-          <span>Drop shadow</span>
-        </label>
+      <div className="gc-toggle-row">
+        <Toggle checked={reveal} onChange={setReveal} label="Word-by-word" />
+        <Toggle checked={highlight} onChange={setHighlight} label="Highlight active" />
+        <Toggle checked={pop} onChange={setPop} label="Pop in" />
+        <Toggle checked={shadow} onChange={setShadow} label="Drop shadow" />
       </div>
 
-      <div className="row button-row">
-        <button onClick={handleBuild} disabled={busy}>
-          {busy ? "Working…" : result ? "Rebuild Captions" : "Build Captions"}
-        </button>
-      </div>
+      {errorMessage && <InlineError message={errorMessage} />}
 
-      {statusText && !errorMessage && <p className="hint">{statusText}</p>}
-      {errorMessage && <p className="status-error">{errorMessage}</p>}
+      <div className="gc-sticky-bar">
+        <Button variant="primary" icon={<Wand2 size={14} />} onClick={handleBuild} loading={busy}>
+          {result ? "Rebuild Captions" : "Build Captions"}
+        </Button>
+        {!busy && statusText && !errorMessage && <span className="gc-hint">{statusText}</span>}
+      </div>
       {result && !busy && !errorMessage && (
-        <p className="hint small">
+        <p className="gc-hint">
           Rebuilding creates a new "{result.precompName}" precomp each time — delete the old one if you
           don't need it.
         </p>
       )}
-    </section>
+    </CollapsibleSection>
   );
 };

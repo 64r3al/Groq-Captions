@@ -1,0 +1,59 @@
+@use "sass:list";
+@use "./tokens";
+
+// Visible keyboard-focus ring (WCAG AA requires a visible focus indicator; :focus-visible skips
+// it for mouse clicks so it only shows up for keyboard/assistive-tech navigation).
+@mixin focus-ring {
+  &:focus-visible {
+    outline: none;
+    box-shadow: var(--gc-shadow-focus);
+  }
+}
+
+@mixin transition($props...) {
+  $items: $props;
+  @if list.length($items) == 0 {
+    $items: (all,);
+  }
+  $out: ();
+  @each $prop in $items {
+    $out: list.append($out, $prop var(--gc-duration-base) var(--gc-ease-out), comma);
+  }
+  transition: $out;
+}
+
+@mixin truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+// For icon-only controls: keeps an accessible name for screen readers without showing text.
+@mixin visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@mixin custom-scrollbar {
+  &::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  &::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  &::-webkit-scrollbar-thumb {
+    background: var(--gc-border);
+    border-radius: var(--gc-radius-pill);
+  }
+  &::-webkit-scrollbar-thumb:hover {
+    background: var(--gc-text-muted);
+  }
+}

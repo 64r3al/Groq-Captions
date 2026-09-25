@@ -1,62 +1,64 @@
 import { useEffect, useState } from "react";
+import { Settings as SettingsIcon, X } from "lucide-react";
 import { applyHostTheme } from "../lib/services/theme";
+import { Button } from "./ui/Button";
+import { CollapsibleSection } from "./ui/SectionHeader";
+import { EmptyState } from "./ui/EmptyState";
 import { TranscribeTab } from "./components/TranscribeTab";
 import { SettingsTab } from "./components/SettingsTab";
-import { PlaceholderTab } from "./components/PlaceholderTab";
-import "./main.scss";
-
-type TabId = "transcribe" | "edit" | "style" | "export" | "settings";
-
-const TABS: { id: TabId; label: string }[] = [
-  { id: "transcribe", label: "Transcribe" },
-  { id: "edit", label: "Edit" },
-  { id: "style", label: "Style" },
-  { id: "export", label: "Export" },
-  { id: "settings", label: "Settings" },
-];
+import "./app.scss";
 
 export const App = () => {
-  const [tab, setTab] = useState<TabId>("transcribe");
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   useEffect(() => {
     applyHostTheme();
   }, []);
 
   return (
-    <div className="app">
-      <div className="tab-bar">
-        {TABS.map((t) => (
-          <button
-            key={t.id}
-            className={"tab-button" + (tab === t.id ? " active" : "")}
-            onClick={() => setTab(t.id)}
-          >
-            {t.label}
-          </button>
-        ))}
-      </div>
-      <div className="tab-content">
-        {tab === "transcribe" && <TranscribeTab onNeedApiKey={() => setTab("settings")} />}
-        {tab === "edit" && (
-          <PlaceholderTab
-            title="Transcript Editor"
-            note="Coming in Phase 3: click a word to jump the playhead, edit text, split/merge captions, and nudge per-word timing."
+    <div className="gc-app">
+      <header className="gc-app-header">
+        <span className="gc-app-wordmark">Groq Captions</span>
+        <Button
+          variant="ghost"
+          size="sm"
+          iconOnly
+          aria-label="Settings"
+          icon={<SettingsIcon size={16} />}
+          onClick={() => setSettingsOpen(true)}
+        />
+      </header>
+
+      <main className="gc-app-body">
+        <TranscribeTab onNeedApiKey={() => setSettingsOpen(true)} />
+
+        <CollapsibleSection
+          title="Export"
+          subtitle="SRT, VTT, JSON, plain text"
+          open={exportOpen}
+          onToggle={() => setExportOpen((o) => !o)}
+        >
+          <EmptyState
+            title="Coming soon"
+            description="Export formats are planned for a later update - for now, captions live directly in your After Effects comp."
           />
-        )}
-        {tab === "style" && (
-          <PlaceholderTab
-            title="Style"
-            note="Coming in Phase 2/3: font, size, color, stroke, background box, position, and animation presets, plus save/load presets."
-          />
-        )}
-        {tab === "export" && (
-          <PlaceholderTab
-            title="Export"
-            note="Coming in Phase 4: SRT, VTT, JSON, and plain-text export of the current transcript."
-          />
-        )}
-        {tab === "settings" && <SettingsTab />}
-      </div>
+        </CollapsibleSection>
+      </main>
+
+      {settingsOpen && (
+        <div className="gc-app-slideover-backdrop" onClick={() => setSettingsOpen(false)}>
+          <div className="gc-app-slideover" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Settings">
+            <div className="gc-app-slideover-header">
+              <span>Settings</span>
+              <Button variant="ghost" size="sm" iconOnly aria-label="Close" icon={<X size={16} />} onClick={() => setSettingsOpen(false)} />
+            </div>
+            <div className="gc-app-slideover-body">
+              <SettingsTab />
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

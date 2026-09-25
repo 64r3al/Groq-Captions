@@ -1,0 +1,188 @@
+@use "./ui/mixins";
+
+// ==========================================================================================
+// Shell: header + scrollable body + settings slide-over
+// ==========================================================================================
+.gc-app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.gc-app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-3) var(--gc-space-4);
+  border-bottom: 1px solid var(--gc-border);
+  background: var(--gc-appbar, var(--gc-surface-1));
+}
+
+.gc-app-wordmark {
+  font-size: var(--gc-text-sm);
+  font-weight: var(--gc-weight-semibold);
+  color: var(--gc-text-primary);
+  white-space: nowrap;
+}
+
+.gc-app-header-pills {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gc-space-1);
+  min-width: 0;
+}
+
+.gc-app-body {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--gc-space-3);
+  padding: var(--gc-space-3);
+  @include mixins.custom-scrollbar;
+}
+
+.gc-app-slideover-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1200;
+  display: flex;
+  justify-content: flex-end;
+  animation: gc-fade-in var(--gc-duration-fast) var(--gc-ease-out);
+}
+
+.gc-app-slideover {
+  width: 88%;
+  max-width: 320px;
+  height: 100%;
+  background: var(--gc-surface-1);
+  border-left: 1px solid var(--gc-border);
+  box-shadow: var(--gc-shadow-md);
+  display: flex;
+  flex-direction: column;
+  animation: gc-slide-in-right var(--gc-duration-base) var(--gc-ease-out);
+}
+
+.gc-app-slideover-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-shrink: 0;
+  padding: var(--gc-space-3) var(--gc-space-4);
+  border-bottom: 1px solid var(--gc-border);
+  font-size: var(--gc-text-sm);
+  font-weight: var(--gc-weight-semibold);
+}
+
+.gc-app-slideover-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--gc-space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--gc-space-4);
+  @include mixins.custom-scrollbar;
+}
+
+@keyframes gc-slide-in-right {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gc-app-slideover-backdrop,
+  .gc-app-slideover {
+    animation: none;
+  }
+}
+
+// ==========================================================================================
+// Generic content layout helpers (used inside sections across TranscribeTab/CaptionBuilder/
+// SettingsTab - the small vocabulary every field-heavy panel needs).
+// ==========================================================================================
+.gc-pane {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gc-space-4);
+}
+
+.gc-field-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--gc-space-2);
+
+  > * {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.gc-toggle-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--gc-space-3);
+}
+
+.gc-hint {
+  margin: 0;
+  font-size: var(--gc-text-xs);
+  color: var(--gc-text-muted);
+  line-height: var(--gc-line-height);
+}
+
+.gc-settings-success {
+  display: flex;
+  align-items: center;
+  gap: var(--gc-space-1);
+  color: var(--gc-success);
+}
+
+// A primary action row that stays pinned to the bottom of whatever section it's in while that
+// section's fields scroll past - the "sticky bottom action bar" from the redesign brief, scoped
+// per-section rather than to the whole panel since Transcribe and Style are sequential steps,
+// never simultaneous primary actions.
+.gc-sticky-bar {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-3) 0;
+  background: var(--gc-surface-0);
+  border-top: 1px solid var(--gc-border);
+  margin: 0 calc(var(--gc-space-4) * -1) calc(var(--gc-space-4) * -1);
+  padding-left: var(--gc-space-4);
+  padding-right: var(--gc-space-4);
+}
+
+// ==========================================================================================
+// Source (selected layer) card
+// ==========================================================================================
+.gc-source-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gc-space-2);
+  padding: var(--gc-space-3) var(--gc-space-4);
+}
+
+.gc-source-meta {
+  font-size: var(--gc-text-xs);
+  color: var(--gc-text-secondary);
+  line-height: var(--gc-line-height);
+}
+
+.gc-source-meta strong {
+  color: var(--gc-text-primary);
+}
