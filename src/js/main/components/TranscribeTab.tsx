@@ -119,9 +119,10 @@ export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) =>
           info.sourceDurationSeconds
         );
         activeHandle.current = handle;
+        tempAudioPath.current = handle.outPath;
         audioPath = await handle.promise;
         isTemp = true;
-        tempAudioPath.current = audioPath;
+        if (cancelledRef.current) throw new Error("Cancelled.");
       } else {
         const ext = info.sourceFileName.split(".").pop()?.toLowerCase() || "";
         const eligible =
@@ -164,10 +165,12 @@ export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) =>
       }
     } finally {
       activeHandle.current = null;
+      // isTemp is only true once ffmpeg actually produced a file; on an extraction failure
+      // ffmpeg.ts already cleaned up its own partial output, so this just clears the stale ref.
       if (isTemp && tempAudioPath.current) {
         removeTempFile(tempAudioPath.current);
-        tempAudioPath.current = null;
       }
+      tempAudioPath.current = null;
     }
   };
 
