@@ -9,7 +9,11 @@ import {
   type ExtractAudioHandle,
 } from "../../lib/services/ffmpeg";
 import { transcribe, type TranscribeHandle } from "../../lib/services/groq";
+import { planChunks, stitchTranscriptChunks, type TranscribedChunk } from "../../../shared/chunking";
+import { CaptionBuilder } from "./CaptionBuilder";
 import {
+  CHUNK_MAX_SECONDS,
+  CHUNK_OVERLAP_SECONDS,
   DIRECT_UPLOAD_EXTENSIONS,
   LANGUAGE_OPTIONS,
   MAX_UPLOAD_BYTES,
@@ -41,6 +45,10 @@ export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) =>
   const [statusText, setStatusText] = useState("");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [transcript, setTranscript] = useState<TranscriptResult | null>(null);
+  // The single audio file this transcript came from, if any (not chunked) - used for onset
+  // refinement in CaptionBuilder. Kept alive (not deleted) once a transcript succeeds; cleaned
+  // up when a new generation starts or this tab unmounts.
+  const [transcriptAudioPath, setTranscriptAudioPath] = useState<string | null>(null);
 
   const activeHandle = useRef<ExtractAudioHandle | TranscribeHandle | null>(null);
   const tempAudioPath = useRef<string | null>(null);
@@ -64,6 +72,14 @@ export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) =>
     refreshSelection();
   }, []);
 
+  // Best-effort cleanup if the user switches tabs (or closes the panel) while a completed
+  // transcript's temp audio is still cached for onset refinement.
+  useEffect(() => {
+    return () => {
+      if (tempAudioPath.current) removeTempFile(tempAudioPath.current);
+    };
+  }, []);
+
   const handleCancel = () => {
     cancelledRef.current = true;
     activeHandle.current?.cancel();
@@ -80,6 +96,11 @@ export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) =>
     cancelledRef.current = false;
     setErrorMessage(null);
     setTranscript(null);
+    setTranscriptAudioPath(null);
+    if (tempAudioPath.current) {
+      removeTempFile(tempAudioPath.current);
+      tempAudioPath.current = null;
+    }
 
     let info: SelectedAudioLayerInfo;
     try {
@@ -99,78 +120,126 @@ export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) =>
       return;
     }
 
-    if (vocab.trim().split(/\s+/).filter(Boolean).length > VOCAB_MAX_TOKENS) {
+    const vocabTokenCount = vocab.trim().split(/\s+/).filter(Boolean).length;
+    if (vocabTokenCount > VOCAB_MAX_TOKENS) {
       setErrorMessage(`Vocabulary prompt is too long (max ~${VOCAB_MAX_TOKENS} tokens).`);
       return;
     }
 
-    let audioPath: string;
-    let isTemp = false;
     const ffmpegPath = findFfmpeg();
+    const transcribeOpts = {
+      apiKey,
+      model,
+      language: language || undefined,
+      prompt: vocab.trim() || undefined,
+    };
 
     try {
-      if (ffmpegPath) {
-        setStage("extracting");
-        setStatusText("Extracting audio with ffmpeg…");
-        const handle = extractAudio(
-          ffmpegPath,
-          info.sourceFilePath,
-          info.sourceInSeconds,
-          info.sourceDurationSeconds
-        );
-        activeHandle.current = handle;
-        tempAudioPath.current = handle.outPath;
-        audioPath = await handle.promise;
-        isTemp = true;
-        if (cancelledRef.current) throw new Error("Cancelled.");
+      if (ffmpegPath && info.sourceDurationSeconds > CHUNK_MAX_SECONDS) {
+        // Long audio: split into overlapping chunks, transcribe each in turn, stitch the
+        // results. No single file represents the whole clip, so onset refinement isn't
+        // offered for this transcript (see CaptionBuilder's audioPath prop).
+        const plan = planChunks(info.sourceDurationSeconds, CHUNK_MAX_SECONDS, CHUNK_OVERLAP_SECONDS);
+        const chunkResults: TranscribedChunk[] = [];
+
+        for (let i = 0; i < plan.length; i++) {
+          if (cancelledRef.current) throw new Error("Cancelled.");
+          setStage("extracting");
+          setStatusText(`Extracting chunk ${i + 1} of ${plan.length}…`);
+          const extractHandle = extractAudio(
+            ffmpegPath,
+            info.sourceFilePath,
+            info.sourceInSeconds + plan[i].start,
+            plan[i].duration
+          );
+          activeHandle.current = extractHandle;
+          tempAudioPath.current = extractHandle.outPath;
+          const chunkAudioPath = await extractHandle.promise;
+          if (cancelledRef.current) throw new Error("Cancelled.");
+
+          setStage("transcribing");
+          setStatusText(`Transcribing chunk ${i + 1} of ${plan.length} with Groq (${model})…`);
+          const transcribeHandle = transcribe(chunkAudioPath, transcribeOpts);
+          activeHandle.current = transcribeHandle;
+          const chunkResult = await transcribeHandle.promise;
+          removeTempFile(chunkAudioPath);
+          tempAudioPath.current = null;
+          if (cancelledRef.current) throw new Error("Cancelled.");
+
+          chunkResults.push({ words: chunkResult.words, offsetSeconds: plan[i].start });
+        }
+
+        const stitchedWords = stitchTranscriptChunks(chunkResults, CHUNK_OVERLAP_SECONDS);
+        setTranscript({ text: stitchedWords.map((w) => w.text).join(" "), words: stitchedWords, segments: [] });
+        setTranscriptAudioPath(null);
+        setStage("done");
+        setStatusText(`Done: ${stitchedWords.length} words across ${plan.length} chunks.`);
       } else {
-        const ext = info.sourceFileName.split(".").pop()?.toLowerCase() || "";
-        const eligible =
-          DIRECT_UPLOAD_EXTENSIONS.includes(ext) && info.sourceFileSizeBytes <= MAX_UPLOAD_BYTES;
-        if (!eligible) {
+        let audioPath: string;
+        let isTemp = false;
+
+        if (ffmpegPath) {
+          setStage("extracting");
+          setStatusText("Extracting audio with ffmpeg…");
+          const handle = extractAudio(
+            ffmpegPath,
+            info.sourceFilePath,
+            info.sourceInSeconds,
+            info.sourceDurationSeconds
+          );
+          activeHandle.current = handle;
+          tempAudioPath.current = handle.outPath;
+          audioPath = await handle.promise;
+          isTemp = true;
+          if (cancelledRef.current) throw new Error("Cancelled.");
+        } else {
+          const ext = info.sourceFileName.split(".").pop()?.toLowerCase() || "";
+          const eligible =
+            DIRECT_UPLOAD_EXTENSIONS.includes(ext) && info.sourceFileSizeBytes <= MAX_UPLOAD_BYTES;
+          if (!eligible) {
+            throw new Error(
+              "ffmpeg was not found, and this file can't be sent directly " +
+                (DIRECT_UPLOAD_EXTENSIONS.includes(ext)
+                  ? "(it is larger than 25 MB)."
+                  : `(.${ext} is not a format Groq accepts directly).`) +
+                "\n\nInstall ffmpeg (Windows: winget install ffmpeg / macOS: brew install ffmpeg) " +
+                "or locate it from the Settings tab."
+            );
+          }
+          audioPath = info.sourceFilePath;
+        }
+
+        if (getFileSizeBytes(audioPath) > MAX_UPLOAD_BYTES) {
           throw new Error(
-            "ffmpeg was not found, and this file can't be sent directly " +
-              (DIRECT_UPLOAD_EXTENSIONS.includes(ext)
-                ? "(it is larger than 25 MB)."
-                : `(.${ext} is not a format Groq accepts directly).`) +
-              "\n\nInstall ffmpeg (Windows: winget install ffmpeg / macOS: brew install ffmpeg) " +
-              "or locate it from the Settings tab."
+            "Audio is larger than 25 MB. Install ffmpeg so it can be split into chunks " +
+              "automatically, or trim the layer and try again."
           );
         }
-        audioPath = info.sourceFilePath;
+
+        setStage("transcribing");
+        setStatusText(`Transcribing with Groq (${model})…`);
+        const handle = transcribe(audioPath, transcribeOpts);
+        activeHandle.current = handle;
+        const result = await handle.promise;
+        if (cancelledRef.current) throw new Error("Cancelled.");
+
+        setTranscript(result);
+        setTranscriptAudioPath(audioPath);
+        if (!isTemp) tempAudioPath.current = null; // direct upload: nothing of ours to clean up
+        setStage("done");
+        setStatusText(`Done: ${result.words.length} words.`);
       }
-
-      if (getFileSizeBytes(audioPath) > MAX_UPLOAD_BYTES) {
-        throw new Error("Audio is larger than 25 MB (about 20+ minutes). Trim the layer and try again.");
-      }
-
-      setStage("transcribing");
-      setStatusText(`Transcribing with Groq (${model})…`);
-      const handle = transcribe(audioPath, {
-        apiKey,
-        model,
-        language: language || undefined,
-        prompt: vocab.trim() || undefined,
-      });
-      activeHandle.current = handle;
-      const result = await handle.promise;
-
-      setTranscript(result);
-      setStage("done");
-      setStatusText(`Done: ${result.words.length} words.`);
     } catch (err: any) {
       if (!cancelledRef.current) {
         setStage("error");
         setErrorMessage(err?.message || String(err));
       }
+      if (tempAudioPath.current) {
+        removeTempFile(tempAudioPath.current);
+        tempAudioPath.current = null;
+      }
     } finally {
       activeHandle.current = null;
-      // isTemp is only true once ffmpeg actually produced a file; on an extraction failure
-      // ffmpeg.ts already cleaned up its own partial output, so this just clears the stale ref.
-      if (isTemp && tempAudioPath.current) {
-        removeTempFile(tempAudioPath.current);
-      }
-      tempAudioPath.current = null;
     }
   };
 
@@ -268,6 +337,10 @@ export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) =>
             </div>
           </div>
         </section>
+      )}
+
+      {transcript && selection && (
+        <CaptionBuilder selection={selection} words={transcript.words} audioPath={transcriptAudioPath} />
       )}
     </div>
   );
