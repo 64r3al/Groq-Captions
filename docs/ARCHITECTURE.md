@@ -177,6 +177,22 @@ interface StoredSettings {
   weren't worth destabilizing the CEP build for a feature this project doesn't touch.
   Revisit if the test suite ever needs mocking, or when 5.x's peer requirements are less of
   a jump.
+- **`cep.config.ts` must stay a side-effect-free plain data literal — no `process.env` reads,
+  no top-level logic.** This bit us once already (caught before merging, not after): its
+  default export is imported by `src/shared/shared.ts` for `ns`/`company`/etc., and
+  `shared.ts` is imported by `src/jsx/index.ts` — meaning `cep.config.ts`'s *entire module
+  body* gets bundled into the ExtendScript output that runs inside After Effects, not just
+  used by the Node-side Vite build. A first version of the ZXP_PASSWORD fix (previous ARCHITECTURE
+  revision) read `process.env.ZXP_PASSWORD` at this file's top level; `process` doesn't exist
+  in ExtendScript's global scope, so that would have thrown the moment the host script loaded
+  in AE, silently breaking the entire extension (not just packaging) — caught by grepping the
+  actual compiled `dist/cep/jsx/index.js` output for `process`, not by `tsc` (which has no way
+  to know this file crosses into the ES3 bundle) or by `vite build` succeeding (it did; the
+  bug was in bundled *content*, not a build error). The real fix: keep `cep.config.ts` a pure
+  literal (`zxp.password: ""` placeholder) and do the env read/validation/injection in
+  `vite.config.ts` instead, which is never imported by anything in `src/jsx/`. If you ever
+  need to change something build-config-related and it feels like it needs a `process.env`
+  read, check first whether it's happening in a file `shared.ts` (transitively) imports.
 
 ## Open questions / risks
 

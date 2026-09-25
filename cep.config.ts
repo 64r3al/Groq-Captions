@@ -1,18 +1,14 @@
 import type { CEP_Config } from "vite-cep-plugin";
 import { version } from "./package.json";
 
-// Only `npm run zxp` / `npm run zip` actually sign a package; every other script (dev, build,
-// typecheck) imports this file too, so the password must not be required outside that path.
-const isSigningZxp =
-  process.env.ZXP_PACKAGE === "true" || process.env.ZIP_PACKAGE === "true";
-const zxpPassword = process.env.ZXP_PASSWORD || "";
-if (isSigningZxp && !zxpPassword) {
-  throw new Error(
-    "ZXP_PASSWORD is not set. Set it in your shell (or a local, git-ignored .env.local " +
-      "exported before this command) before running `npm run zxp` / `npm run zip` — the " +
-      "certificate password must never be committed to this public repo."
-  );
-}
+// IMPORTANT: this file's default export is imported by src/shared/shared.ts, which is in turn
+// reachable from src/jsx/index.ts - meaning everything at this module's top level gets bundled
+// into the ExtendScript (ES3, runs *inside After Effects*) host output too, not just used by
+// the Node-side Vite build. `process` doesn't exist in ExtendScript's global scope, so this
+// file must stay a plain data literal with no `process.env` reads or other side effects - the
+// actual ZXP_PASSWORD sourcing/validation lives in vite.config.ts instead (never bundled into
+// the host output), which overwrites the placeholder below before vite-cep-plugin signs a
+// package. See docs/ARCHITECTURE.md.
 
 const config: CEP_Config = {
   version,
@@ -53,7 +49,9 @@ const config: CEP_Config = {
     country: "US",
     province: "CA",
     org: "Groq Captions",
-    password: zxpPassword,
+    // Placeholder only - vite.config.ts overwrites this with ZXP_PASSWORD before signing.
+    // Never a real secret, so it's fine for this literal object to be bundled anywhere.
+    password: "",
     tsa: [
       "http://timestamp.digicert.com/", // Windows Only
       "http://timestamp.apple.com/ts01", // MacOS Only
