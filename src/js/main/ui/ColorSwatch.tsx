@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Popover } from "./Popover";
 import { Input } from "./Input";
 import { usePersistedState } from "./hooks";
+import { hexToInt, intToHex } from "./color";
 
 export interface ColorSwatchProps {
   /** 0xRRGGBB integer, matching CaptionStyle's color fields - no conversion needed at the
@@ -10,12 +11,6 @@ export interface ColorSwatchProps {
   onChange: (value: number) => void;
   label?: string;
 }
-
-const intToHex = (n: number): string => `#${n.toString(16).padStart(6, "0")}`;
-const hexToInt = (hex: string): number | null => {
-  const m = /^#?([0-9a-fA-F]{6})$/.exec(hex.trim());
-  return m ? parseInt(m[1], 16) : null;
-};
 
 const RECENT_KEY = "gc-recent-colors";
 const MAX_RECENT = 8;

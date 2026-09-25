@@ -137,3 +137,17 @@ export const useInView = (ref: React.RefObject<HTMLElement | null>): boolean => 
   }, [ref]);
   return inView;
 };
+
+/** Tracks an element's content-box width via ResizeObserver - used by CaptionPreviewCanvas to
+ * scale its sample text to the actual rendered frame size instead of a fixed panel width. */
+export const useElementWidth = (ref: React.RefObject<HTMLElement | null>): number => {
+  const [width, setWidth] = useState(0);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setWidth(entry.contentRect.width));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [ref]);
+  return width;
+};

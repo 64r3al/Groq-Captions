@@ -2,6 +2,7 @@
 @use "./main/ui/mixins";
 @use "./main/ui/_inter-font-face";
 @use "./main/ui/primitives";
+@use "./main/features/features";
 
 // Global resets and the few truly page-level rules. Every actual component's styling lives in
 // src/js/main/ui/ (primitives) or alongside its own component (features) — this file just sets
