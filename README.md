@@ -80,9 +80,22 @@ extensions folder. Launch or restart After Effects, then open the panel from
 
 ```sh
 npm run build   # production build to dist/cep
-npm run zxp     # signed .zxp for distribution (edit the zxp cert/password in cep.config.ts first)
+npm run zxp     # signed .zxp for distribution
 npm run zip     # .zip with the zxp + install instructions
 ```
+
+`npm run zxp` / `npm run zip` sign the package with a self-signed certificate, whose password
+comes from the `ZXP_PASSWORD` environment variable — it is **not** stored in `cep.config.ts`
+(this repo is public). Export it in your shell before packaging:
+
+```sh
+export ZXP_PASSWORD="something-only-you-know"
+npm run zxp
+```
+
+Without it, `cep.config.ts` throws immediately with a clear error instead of silently signing
+with a placeholder password. This is unrelated to `.env.local`/`GROQ_API_KEY` — that file is
+only read at panel runtime (inside After Effects), never by these build scripts.
 
 ## Project layout
 

@@ -1,6 +1,19 @@
 import type { CEP_Config } from "vite-cep-plugin";
 import { version } from "./package.json";
 
+// Only `npm run zxp` / `npm run zip` actually sign a package; every other script (dev, build,
+// typecheck) imports this file too, so the password must not be required outside that path.
+const isSigningZxp =
+  process.env.ZXP_PACKAGE === "true" || process.env.ZIP_PACKAGE === "true";
+const zxpPassword = process.env.ZXP_PASSWORD || "";
+if (isSigningZxp && !zxpPassword) {
+  throw new Error(
+    "ZXP_PASSWORD is not set. Set it in your shell (or a local, git-ignored .env.local " +
+      "exported before this command) before running `npm run zxp` / `npm run zip` — the " +
+      "certificate password must never be committed to this public repo."
+  );
+}
+
 const config: CEP_Config = {
   version,
   id: "com.groqcaptions.panel",
@@ -40,7 +53,7 @@ const config: CEP_Config = {
     country: "US",
     province: "CA",
     org: "Groq Captions",
-    password: "password",
+    password: zxpPassword,
     tsa: [
       "http://timestamp.digicert.com/", // Windows Only
       "http://timestamp.apple.com/ts01", // MacOS Only
