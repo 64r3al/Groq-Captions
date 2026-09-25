@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { RefreshCw, FileAudio } from "lucide-react";
 import { evalTS } from "../../lib/utils/bolt";
 import { resolveApiKey } from "../../lib/services/apiKey";
 import {
@@ -11,6 +12,16 @@ import {
 import { transcribe, type TranscribeHandle } from "../../lib/services/groq";
 import { planChunks, stitchTranscriptChunks, type TranscribedChunk } from "../../../shared/chunking";
 import { CaptionBuilder } from "./CaptionBuilder";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
+import { Select } from "../ui/Select";
+import { InlineError } from "../ui/InlineError";
+import { EmptyState } from "../ui/EmptyState";
+import { CollapsibleSection, SectionHeader } from "../ui/SectionHeader";
+import { Card } from "../ui/Card";
+import { StagedProgress } from "../ui/Progress";
+import { WaveformPreview } from "../features/WaveformPreview";
+import { TranscriptEditor } from "../features/TranscriptEditor";
 import {
   CHUNK_MAX_SECONDS,
   CHUNK_OVERLAP_SECONDS,
@@ -24,13 +35,13 @@ import type { GroqModel, SelectedAudioLayerInfo, TranscriptResult } from "../../
 
 type Stage = "idle" | "extracting" | "transcribing" | "done" | "error";
 
+const STAGE_STEPS = [
+  { key: "extracting", label: "Extracting" },
+  { key: "transcribing", label: "Transcribing" },
+];
+
 const fmtBytes = (n: number) => `${(n / (1024 * 1024)).toFixed(1)} MB`;
 const fmtSeconds = (n: number) => `${n.toFixed(1)}s`;
-const fmtTimestamp = (n: number) => {
-  const m = Math.floor(n / 60);
-  const s = (n % 60).toFixed(2);
-  return `${m}:${s.padStart(5, "0")}`;
-};
 
 export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) => {
   const [selection, setSelection] = useState<SelectedAudioLayerInfo | null>(null);
@@ -49,6 +60,9 @@ export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) =>
   // refinement in CaptionBuilder. Kept alive (not deleted) once a transcript succeeds; cleaned
   // up when a new generation starts or this tab unmounts.
   const [transcriptAudioPath, setTranscriptAudioPath] = useState<string | null>(null);
+
+  const [transcribeOpen, setTranscribeOpen] = useState(true);
+  const [transcriptOpen, setTranscriptOpen] = useState(true);
 
   const activeHandle = useRef<ExtractAudioHandle | TranscribeHandle | null>(null);
   const tempAudioPath = useRef<string | null>(null);
@@ -113,7 +127,17 @@ export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) =>
       return;
     }
 
-    const { key: apiKey } = resolveApiKey();
+    // resolveApiKey()/findFfmpeg() read from the filesystem via Node integration, which isn't
+    // present in the plain-browser `npm run dev` server (see lib/services/env.ts) - catch that
+    // here so it surfaces as the same on-screen error every other failure below gets, instead
+    // of an unhandled rejection that leaves the button looking like it did nothing.
+    let apiKey: string | null;
+    try {
+      apiKey = resolveApiKey().key;
+    } catch (err: any) {
+      setErrorMessage(err?.message || String(err));
+      return;
+    }
     if (!apiKey) {
       setErrorMessage("Add your Groq API key in Settings first.");
       onNeedApiKey();
@@ -126,7 +150,13 @@ export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) =>
       return;
     }
 
-    const ffmpegPath = findFfmpeg();
+    let ffmpegPath: string | null;
+    try {
+      ffmpegPath = findFfmpeg();
+    } catch (err: any) {
+      setErrorMessage(err?.message || String(err));
+      return;
+    }
     const transcribeOpts = {
       apiKey,
       model,
@@ -246,97 +276,88 @@ export const TranscribeTab = ({ onNeedApiKey }: { onNeedApiKey: () => void }) =>
   const busy = stage === "extracting" || stage === "transcribing";
 
   return (
-    <div className="pane">
-      <section className="field-group">
-        <div className="row space-between">
-          <h3>Selection</h3>
-          <button className="secondary small" onClick={refreshSelection} disabled={loadingSelection}>
-            {loadingSelection ? "Checking…" : "Refresh"}
-          </button>
-        </div>
+    <div className="gc-pane">
+      <Card className="gc-source-card">
+        <SectionHeader
+          title="Source"
+          action={
+            <Button size="sm" variant="ghost" icon={<RefreshCw size={14} />} onClick={refreshSelection} loading={loadingSelection}>
+              Refresh
+            </Button>
+          }
+        />
         {selection ? (
-          <p className="hint">
-            <strong>{selection.layerName}</strong> in {selection.compName} —{" "}
-            {fmtSeconds(selection.sourceDurationSeconds)} of audio (
-            {fmtBytes(selection.sourceFileSizeBytes)} source file)
-          </p>
+          <>
+            <WaveformPreview seed={selection.sourceFileName} />
+            <p className="gc-source-meta">
+              <strong>{selection.layerName}</strong> in {selection.compName} — {fmtSeconds(selection.sourceDurationSeconds)} of
+              audio ({fmtBytes(selection.sourceFileSizeBytes)} source file)
+            </p>
+          </>
         ) : (
-          <p className="hint status-error">{selectionError || "Select a voice layer in After Effects."}</p>
-        )}
-      </section>
-
-      <section className="field-group">
-        <h3>Transcription</h3>
-        <label className="field">
-          <span>Model</span>
-          <select value={model} onChange={(e) => setModel(e.target.value as GroqModel)}>
-            {MODEL_OPTIONS.map((m) => (
-              <option key={m.value} value={m.value}>
-                {m.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>Language</span>
-          <select value={language} onChange={(e) => setLanguage(e.target.value)}>
-            {LANGUAGE_OPTIONS.map((l) => (
-              <option key={l.value} value={l.value}>
-                {l.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="field">
-          <span>Vocabulary</span>
-          <input
-            type="text"
-            placeholder="Names, brands, slang to spell correctly"
-            value={vocab}
-            onChange={(e) => setVocab(e.target.value)}
+          <EmptyState
+            icon={<FileAudio size={22} />}
+            title="No audio layer selected"
+            description={selectionError || "Select a layer with audio in After Effects, then refresh."}
+            action={
+              <Button size="sm" variant="secondary" icon={<RefreshCw size={14} />} onClick={refreshSelection}>
+                Refresh
+              </Button>
+            }
           />
-        </label>
-      </section>
-
-      <div className="row button-row">
-        <button onClick={handleGenerate} disabled={busy || !selection}>
-          {busy ? "Working…" : "Generate Transcript"}
-        </button>
-        {busy && (
-          <button className="secondary" onClick={handleCancel}>
-            Cancel
-          </button>
         )}
-      </div>
+      </Card>
 
-      {statusText && stage !== "error" && <p className="hint">{statusText}</p>}
-      {errorMessage && <p className="status-error">{errorMessage}</p>}
+      <CollapsibleSection
+        title="Transcribe"
+        subtitle={`${MODEL_OPTIONS.find((m) => m.value === model)?.label || model}`}
+        open={transcribeOpen}
+        onToggle={() => setTranscribeOpen((o) => !o)}
+      >
+        <Select
+          label="Model"
+          value={model}
+          onChange={(e) => setModel(e.target.value as GroqModel)}
+          options={MODEL_OPTIONS.map((m) => ({ value: m.value, label: m.label }))}
+        />
+        <Select
+          label="Language"
+          value={language}
+          onChange={(e) => setLanguage(e.target.value)}
+          options={LANGUAGE_OPTIONS.map((l) => ({ value: l.value, label: l.label }))}
+        />
+        <Input
+          label="Vocabulary"
+          placeholder="Names, brands, slang to spell correctly"
+          value={vocab}
+          onChange={(e) => setVocab(e.target.value)}
+        />
+
+        {errorMessage && <InlineError message={errorMessage} />}
+
+        <div className="gc-sticky-bar">
+          <Button variant="primary" onClick={handleGenerate} disabled={busy || !selection} loading={busy}>
+            Generate Transcript
+          </Button>
+          {busy && (
+            <Button variant="ghost" onClick={handleCancel}>
+              Cancel
+            </Button>
+          )}
+          {busy && <StagedProgress steps={STAGE_STEPS} activeKey={stage} />}
+          {!busy && statusText && stage !== "error" && <span className="gc-hint">{statusText}</span>}
+        </div>
+      </CollapsibleSection>
 
       {transcript && (
-        <section className="field-group">
-          <h3>Transcript</h3>
-          <p className="hint">
-            {transcript.words.length} words
-            {transcript.language ? ` · detected language: ${transcript.language}` : ""}
-          </p>
-          <div className="transcript-text">{transcript.text}</div>
-          <div className="word-table">
-            <div className="word-table-header">
-              <span>Start</span>
-              <span>End</span>
-              <span>Word</span>
-            </div>
-            <div className="word-table-body">
-              {transcript.words.map((w, i) => (
-                <div className="word-row" key={i}>
-                  <span>{fmtTimestamp(w.start)}</span>
-                  <span>{fmtTimestamp(w.end)}</span>
-                  <span>{w.text}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        </section>
+        <CollapsibleSection
+          title="Transcript"
+          subtitle={`${transcript.words.length} words${transcript.language ? ` · ${transcript.language}` : ""}`}
+          open={transcriptOpen}
+          onToggle={() => setTranscriptOpen((o) => !o)}
+        >
+          <TranscriptEditor words={transcript.words} />
+        </CollapsibleSection>
       )}
 
       {transcript && selection && (

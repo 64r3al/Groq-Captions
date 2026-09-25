@@ -1,7 +1,11 @@
 import { useEffect, useState } from "react";
+import { Check, FolderSearch, KeyRound } from "lucide-react";
 import { evalTS } from "../../lib/utils/bolt";
 import { resolveApiKey, saveApiKey, clearStoredApiKey, testApiKey } from "../../lib/services/apiKey";
 import { findFfmpeg, setFfmpegOverride } from "../../lib/services/ffmpeg";
+import { Button } from "../ui/Button";
+import { Input } from "../ui/Input";
+import { InlineError } from "../ui/InlineError";
 import type { ApiKeyStatus } from "../../../shared/types";
 
 const sourceLabel = (status: ApiKeyStatus): string => {
@@ -18,9 +22,19 @@ export const SettingsTab = () => {
   const [ffmpegPath, setFfmpegPath] = useState<string | null>(null);
 
   const refresh = () => {
-    const { status } = resolveApiKey();
-    setStatus(status);
-    setFfmpegPath(findFfmpeg());
+    // Node integration (fs/child_process) isn't present in the plain-browser `npm run dev`
+    // server - resolveApiKey()/findFfmpeg() throw a clear "Node.js integration isn't
+    // available" error there (see lib/services/env.ts#assertNodeAvailable). Inside After
+    // Effects this never throws, so this only ever renders the "not configured" fallback
+    // state in browser dev, never masking a real failure.
+    try {
+      const { status } = resolveApiKey();
+      setStatus(status);
+      setFfmpegPath(findFfmpeg());
+    } catch {
+      setStatus({ source: "none", last4: "" });
+      setFfmpegPath(null);
+    }
   };
 
   useEffect(refresh, []);
@@ -62,52 +76,54 @@ export const SettingsTab = () => {
   };
 
   return (
-    <div className="pane">
-      <section className="field-group">
-        <h3>Groq API key</h3>
-        <p className="hint">{sourceLabel(status)}</p>
-        <div className="row">
-          <input
-            type="password"
-            placeholder="gsk_..."
-            value={keyInput}
-            onChange={(e) => setKeyInput(e.target.value)}
-          />
-        </div>
-        <div className="row button-row">
-          <button onClick={handleSave} disabled={!keyInput.trim()}>
+    <div className="gc-pane">
+      <section className="gc-pane">
+        <h3 className="gc-section-header-title">Groq API key</h3>
+        <p className="gc-hint">{sourceLabel(status)}</p>
+        <Input
+          type="password"
+          placeholder="gsk_..."
+          icon={<KeyRound size={14} />}
+          value={keyInput}
+          onChange={(e) => setKeyInput(e.target.value)}
+        />
+        <div className="gc-toggle-row">
+          <Button size="sm" onClick={handleSave} disabled={!keyInput.trim()}>
             Save key
-          </button>
-          <button onClick={handleTest} disabled={testing}>
-            {testing ? "Testing…" : "Test key"}
-          </button>
-          <button className="secondary" onClick={handleClear} disabled={status.source !== "settings"}>
+          </Button>
+          <Button size="sm" variant="secondary" onClick={handleTest} loading={testing}>
+            Test key
+          </Button>
+          <Button size="sm" variant="ghost" onClick={handleClear} disabled={status.source !== "settings"}>
             Clear saved key
-          </button>
+          </Button>
         </div>
-        {testResult && (
-          <p className={testResult.ok ? "status-ok" : "status-error"}>{testResult.message}</p>
+        {testResult && !testResult.ok && <InlineError message={testResult.message} />}
+        {testResult?.ok && (
+          <p className="gc-hint gc-settings-success">
+            <Check size={12} /> {testResult.message}
+          </p>
         )}
-        <p className="hint small">
+        <p className="gc-hint">
           Keys are stored encrypted in your OS user profile, never in this project's files. A
-          key can also be provided via a local-only <code>.env.local</code> (GROQ_API_KEY=...)
-          during development; a saved key here always takes priority.
+          key can also be provided via a local-only .env.local (GROQ_API_KEY=...) during
+          development; a saved key here always takes priority.
         </p>
       </section>
 
-      <section className="field-group">
-        <h3>ffmpeg</h3>
+      <section className="gc-pane">
+        <h3 className="gc-section-header-title">ffmpeg</h3>
         {ffmpegPath ? (
-          <p className="hint">Found: {ffmpegPath}</p>
+          <p className="gc-hint">Found: {ffmpegPath}</p>
         ) : (
-          <p className="hint status-error">
-            Not found. Without ffmpeg, only short clips (≤25 MB, mp3/mp4/wav/m4a/flac/ogg/webm)
-            can be sent directly to Groq.
-          </p>
+          <InlineError
+            variant="warning"
+            message="Not found. Without ffmpeg, only short clips (≤25 MB, mp3/mp4/wav/m4a/flac/ogg/webm) can be sent directly to Groq."
+          />
         )}
-        <div className="row button-row">
-          <button onClick={handleLocateFfmpeg}>Locate ffmpeg…</button>
-        </div>
+        <Button size="sm" variant="secondary" icon={<FolderSearch size={14} />} onClick={handleLocateFfmpeg}>
+          Locate ffmpeg…
+        </Button>
       </section>
     </div>
   );
