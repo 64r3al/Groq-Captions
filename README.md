@@ -42,14 +42,33 @@ Expressions ▸ check **"Allow Scripts to Write Files and Access Network"**.
 
 ### Enable CEP debug mode (unsigned extensions)
 
-Required to load an unpackaged extension during development.
+Required to load an unpackaged extension during development. **Which CEP version your AE
+uses depends on its release**, and it's changed recently enough that you should set *both*
+CSXS.11 and CSXS.12 rather than guess:
 
-- **macOS**: in Terminal, run
-  `defaults write com.adobe.CSXS.11 PlayerDebugMode 1`
-  (bump `.11` to match your CEP version if different; bolt-cep's dev server prints which
-  one it's using).
-- **Windows**: in `regedit`, create/set
-  `HKEY_CURRENT_USER\Software\Adobe\CSXS.11` → `PlayerDebugMode` (string) → `1`.
+- After Effects 2022–2024 (versions up to ~24.x): **CEP 11**.
+- After Effects 2025 / 2026 (versions ~25.x and newer): **CEP 12**.
+
+`npm run dev`'s console output also prints the exact port/version bolt-cep is targeting if
+you want to confirm.
+
+- **macOS**: in Terminal, run both
+  ```sh
+  defaults write com.adobe.CSXS.11 PlayerDebugMode 1
+  defaults write com.adobe.CSXS.12 PlayerDebugMode 1
+  ```
+- **Windows**: in `regedit`, create both
+  `HKEY_CURRENT_USER\Software\Adobe\CSXS.11` and `HKEY_CURRENT_USER\Software\Adobe\CSXS.12`,
+  and in each create a String Value named `PlayerDebugMode` set to `1`.
+
+**Known CEP 12 bug:** on some recent AE builds (reported against AE 2026 on Windows, and
+against other CC 2025 apps on macOS), CEP 12 silently ignores `PlayerDebugMode` and enforces
+signature verification anyway, so the panel refuses to load even with the key set correctly.
+There's no official fix yet. The workaround is to self-sign the extension instead of relying
+on debug mode: `npm run zxp` (see **Build / package** below) already uses the ZXPSignCmd
+binaries bundled with vite-cep-plugin to produce a self-signed `.zxp` — install that (double
+-click it, or drag it onto the ZXP Installer / Anastasiy's Extension Manager) instead of using
+the dev symlink if your panel won't load despite debug mode being set.
 
 ## Run in development
 

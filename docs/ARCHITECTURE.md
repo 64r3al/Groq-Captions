@@ -159,6 +159,24 @@ interface StoredSettings {
 - **No onset refinement (RMS energy snapping) yet.** Explicitly a Phase 2 item per the
   master prompt's own phase list, and it's meaningless without the frame-quantization/comp-
   time-mapping it sits on top of, which also lands in Phase 2.
+- **`installModules: []` in `cep.config.ts` is correct, not an oversight.** That field copies
+  third-party npm packages into the packaged extension so `require("pkg")` resolves at
+  runtime in an installed ZXP (dev mode has full `node_modules`, but the shipped package
+  doesn't). Every Node-side service (`ffmpeg.ts`, `groq.ts`, `settingsStore.ts`, `apiKey.ts`)
+  uses only Node built-ins (`fs`, `https`, `child_process`, `os`, `path`, `crypto`) via
+  `src/js/lib/cep/node.ts`'s `require()` wrapper — no third-party runtime package is ever
+  `require()`'d. This is exactly why the multipart body is hand-built instead of using
+  `form-data` (previous bullet): it lets `installModules` stay empty and removes a whole
+  class of "works in dev, breaks once packaged" bugs.
+- **`vitest` is pinned to `^3.2.7`, not upgraded to `5.x`**, despite `npm audit` flagging a
+  moderate advisory ([GHSA-82fw-gwwq-j7x9](https://github.com/advisories/GHSA-82fw-gwwq-j7x9))
+  in `@vitest/mocker`'s redirect-mock feature that spans the entire 2.x–4.x line and is only
+  fixed in 5.0.2. We don't use mocking at all (the test suite is pure functions in and
+  assertions out), vitest is dev-only tooling that never ships in the extension or runs
+  against untrusted input, and 5.x raises the `@types/node`/Node engine floor in ways that
+  weren't worth destabilizing the CEP build for a feature this project doesn't touch.
+  Revisit if the test suite ever needs mocking, or when 5.x's peer requirements are less of
+  a jump.
 
 ## Open questions / risks
 
