@@ -1,0 +1,110 @@
+// Design tokens. Every color a component uses should reference one of these — never a literal
+// hex value — so the whole panel repaints correctly when src/js/lib/services/theme.ts updates
+// --gc-surface-*/--gc-text-*/--gc-border-* at runtime from AE's actual panel skin.
+//
+// Static tokens (accent, semantic, type scale, spacing, radii, shadow, motion) are NOT touched
+// by theme.ts - they're this product's own palette/rhythm, independent of AE's brightness.
+
+:root {
+  // --- Surfaces (elevation ladder) -------------------------------------------------------
+  // Defaults match AE's typical dark UI; theme.ts overwrites these four from the host's real
+  // appSkinInfo.panelBackgroundColor the moment the panel loads, and again on every
+  // ThemeColorChanged event.
+  --gc-surface-0: #1e1e1e; // base app background
+  --gc-surface-1: #292929; // cards / sections (raised)
+  --gc-surface-2: #171717; // recessed wells (inputs, code blocks)
+  --gc-surface-3: #333333; // popovers / overlays / toasts (elevated, gets a shadow)
+  --gc-appbar: #262626; // header / sticky action bar background (AE's own app-bar color)
+
+  // --- Text --------------------------------------------------------------------------------
+  // Every pair below is verified >= 4.5:1 (WCAG AA, normal text) against surface-0/1/2 — see
+  // the contrast check this file's values were chosen from in the PR description/commit.
+  --gc-text-primary: #f0f0f0;
+  --gc-text-secondary: #b8b8b8;
+  --gc-text-muted: #959595;
+  --gc-text-on-accent: #ffffff;
+
+  // --- Borders -----------------------------------------------------------------------------
+  --gc-border: rgba(255, 255, 255, 0.1);
+  --gc-border-strong: var(--gc-accent);
+
+  // --- Accent (one color, used sparingly: primary actions, active word, focus) --------------
+  // Two roles, two shades: `accent` is tuned so --gc-text-on-accent stays >=4.5:1 on top of it
+  // (button fills); `accent-text` is tuned for use as a foreground color directly on a dark
+  // surface (links, active-tab label, small icons) where it never sits under white text.
+  --gc-accent: #1f6fc4;
+  --gc-accent-hover: #2277cf;
+  --gc-accent-active: #1a5fa8;
+  --gc-accent-wash: rgba(31, 111, 196, 0.16);
+  --gc-accent-text: #4a9bf0;
+
+  // --- Semantic ------------------------------------------------------------------------------
+  --gc-success: #4caf7d;
+  --gc-success-bg: rgba(76, 175, 125, 0.12);
+  --gc-warning: #e0b23a;
+  --gc-warning-bg: rgba(224, 178, 58, 0.12);
+  --gc-danger: #e66a63;
+  --gc-danger-bg: rgba(230, 106, 99, 0.12);
+
+  // --- Type ------------------------------------------------------------------------------------
+  // theme.ts overwrites --gc-font-family/-size from AE's baseFontFamily/baseFontSize; Inter
+  // (bundled locally, see ./fonts) is the default/fallback, not a hard requirement, so the
+  // panel still honors a host that prefers something else.
+  --gc-font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --gc-font-size: 12px; // body default; see the scale below for the rest
+
+  --gc-text-2xs: 11px; // micro labels, secondary timecodes, badges
+  --gc-text-xs: 12px; // body default
+  --gc-text-sm: 13px; // emphasized body, input text
+  --gc-text-md: 15px; // section headers, primary button label
+
+  --gc-weight-regular: 400;
+  --gc-weight-medium: 500;
+  --gc-weight-semibold: 600;
+
+  --gc-line-height: 1.45;
+
+  // --- Spacing (4px grid) ---------------------------------------------------------------------
+  --gc-space-1: 4px;
+  --gc-space-2: 8px;
+  --gc-space-3: 12px;
+  --gc-space-4: 16px;
+  --gc-space-5: 20px;
+  --gc-space-6: 24px;
+
+  // --- Radii -------------------------------------------------------------------------------------
+  --gc-radius-control: 6px;
+  --gc-radius-card: 10px;
+  --gc-radius-pill: 999px;
+
+  // --- Shadows (elevation cues; used sparingly, only where they add real depth) ----------------
+  --gc-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28), 0 0 0 1px rgba(0, 0, 0, 0.12);
+  --gc-shadow-md: 0 4px 16px rgba(0, 0, 0, 0.36), 0 0 0 1px rgba(0, 0, 0, 0.14);
+  --gc-shadow-focus: 0 0 0 3px var(--gc-accent-wash);
+
+  // --- Motion ------------------------------------------------------------------------------------
+  --gc-ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --gc-duration-fast: 120ms;
+  --gc-duration-base: 160ms;
+  --gc-duration-slow: 200ms;
+}
+
+// Respect prefers-reduced-motion globally: components should still use the duration/easing
+// tokens above, but this zeroes them out for anyone who's asked for less motion, without every
+// component needing its own media query.
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --gc-duration-fast: 0ms;
+    --gc-duration-base: 0ms;
+    --gc-duration-slow: 0ms;
+  }
+}
+
+// Tabular numerals for every timecode, frame count, and scrubber value, so digits don't shift
+// width as they change.
+.gc-num {
+  font-variant-numeric: tabular-nums;
+}
+
+// The @font-face rule itself lives in ./_inter-font-face.scss (base64-inlined, auto-generated
+// - see that file for why) and is pulled in once from src/js/index.scss.

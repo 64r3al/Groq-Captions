@@ -32,3 +32,13 @@ The original `Groq_Captions.jsx` ScriptUI prototype supplied for this project wa
 functional reference for word-level sync, caption grouping, and Expression Selector animation
 logic; that logic is ported into `src/jsx/aeft/` starting in Phase 2 (see
 `docs/ARCHITECTURE.md`).
+
+`src/js/main/ui/fonts/Inter-Variable.woff2` is the [Inter](https://rsms.me/inter/) variable
+typeface by The Inter Project Authors, licensed under the SIL Open Font License 1.1 (full
+text in `src/js/main/ui/fonts/Inter-LICENSE.txt`) — bundled locally rather than loaded from
+Google Fonts or any other network source, so the panel never depends on network access just
+to render its own UI (`lucide-react`, MIT licensed, is used the same self-contained way for
+icons). The actual `@font-face` rule the build uses is the base64-inlined, auto-generated
+`src/js/main/ui/_inter-font-face.scss` (see that file's header comment for why it's inlined
+rather than a plain `url()` asset reference) — the `.woff2` file is kept as the source of
+truth/attribution copy, not referenced directly by the build.
