@@ -23,6 +23,20 @@ const isPackage = process.env.ZXP_PACKAGE === "true" || isMetaPackage;
 const isServe = process.env.SERVE_PANEL === "true";
 const action = process.env.BOLT_ACTION;
 
+// The password must never live in cep.config.ts itself: that file's default export is also
+// imported (via src/shared/shared.ts) into the ExtendScript bundle that runs *inside After
+// Effects*, so anything with a `process.env` read there would throw at panel load time (no
+// `process` global in ExtendScript). vite.config.ts is never part of that bundle, so this is
+// the right place to source and validate it, then patch it into the config object actually
+// passed to vite-cep-plugin below.
+if (isPackage && !process.env.ZXP_PASSWORD) {
+  throw new Error(
+    "ZXP_PASSWORD is not set. Set it in your shell before running `npm run zxp` / " +
+      "`npm run zip` - the certificate password must never be committed to this public repo."
+  );
+}
+cepConfig.zxp.password = process.env.ZXP_PASSWORD || "";
+
 let input: { [key: string]: string } = {};
 cepConfig.panels.map((panel) => {
   input[panel.name] = path.resolve(root, panel.mainPath);

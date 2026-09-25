@@ -12,7 +12,8 @@
     "serve": "cross-env SERVE_PANEL=true vite preview",
     "symlink": "cross-env BOLT_ACTION=symlink vite",
     "delsymlink": "cross-env BOLT_ACTION=delsymlink vite",
-    "typecheck": "tsc --noEmit -p tsconfig-build.json && tsc --noEmit -p src/jsx/aeft/tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig-build.json && tsc --noEmit -p src/jsx/aeft/tsconfig.json",
+    "test": "vitest run"
   },
   "dependencies": {
     "react": "^19.1.0",
@@ -54,6 +55,7 @@
     "types-for-adobe-extras": "^0.0.9",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
-    "vite-cep-plugin": "^2.2.3"
+    "vite-cep-plugin": "^2.2.3",
+    "vitest": "^3.2.7"
   }
 }

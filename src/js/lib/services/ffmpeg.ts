@@ -55,6 +55,9 @@ export const setFfmpegOverride = (ffmpegPath: string | null): void => {
 export interface ExtractAudioHandle {
   promise: Promise<string>;
   cancel: () => void;
+  /** The temp file ffmpeg will write to, known synchronously so a canceller can clean up
+   * even before the promise settles (see removeTempFile). */
+  outPath: string;
 }
 
 /** Extracts only the used portion of the source clip as 16kHz mono FLAC, matching what Groq's
@@ -71,6 +74,14 @@ export const extractAudio = (
     os.tmpdir(),
     `groqcap_audio_${Date.now()}_${Math.round(Math.random() * 1e6)}.flac`
   );
+
+  const cleanupPartial = () => {
+    try {
+      if (fs.existsSync(outPath)) fs.unlinkSync(outPath);
+    } catch {
+      // best-effort: a killed ffmpeg can still hold the file handle briefly on Windows
+    }
+  };
 
   let child: any;
   const promise = new Promise<string>((resolve, reject) => {
@@ -102,10 +113,12 @@ export const extractAudio = (
       stderr: string
     ) => {
       if (err) {
+        cleanupPartial();
         reject(new Error(`ffmpeg could not extract audio.\n${stderr || err.message}`));
         return;
       }
       if (!fs.existsSync(outPath) || fs.statSync(outPath).size < 100) {
+        cleanupPartial();
         reject(new Error(`ffmpeg could not extract audio.\n${stderr}`));
         return;
       }
@@ -115,6 +128,7 @@ export const extractAudio = (
 
   return {
     promise,
+    outPath,
     cancel: () => {
       try {
         child?.kill();

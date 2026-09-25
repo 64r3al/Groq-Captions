@@ -7,3 +7,7 @@ dist-ssr
 yarn-error.log
 .media
 *.tsbuildinfo
+
+# Old ScriptUI prototype folder some contributors keep around locally — it has a
+# hardcoded API key in Groq_Captions.jsx and must never be committed.
+reference/

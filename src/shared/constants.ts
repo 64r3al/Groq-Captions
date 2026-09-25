@@ -48,3 +48,53 @@ export const LANGUAGE_OPTIONS: { value: string; label: string }[] = [
 export const VOCAB_MAX_TOKENS = 224;
 
 export const APP_SETTINGS_DIR_NAME = "GroqCaptions";
+
+// --- Phase 2: sync/grouping/style defaults --------------------------------------------------
+
+/** Caption vertical position as a fraction of comp height (0 = top). Index matches
+ * CaptionPositionIndex / POSITION_OPTIONS below. */
+export const POSITION_Y_FRACTIONS = [0.82, 0.7, 0.5, 0.16] as const;
+
+export const POSITION_OPTIONS: { label: string }[] = [
+  { label: "Bottom" },
+  { label: "Lower third" },
+  { label: "Center" },
+  { label: "Top" },
+];
+
+export const DEFAULT_SYNC_OPTIONS = {
+  offsetFrames: 0,
+  leadInFrames: 0,
+  onsetWindowSeconds: 0.15,
+  onsetThresholdRatio: 0.25,
+};
+
+export const DEFAULT_GROUPING_OPTIONS = {
+  maxWords: 3,
+  maxCharsPerLine: 20,
+  maxLines: 2,
+  pauseBreakSeconds: 0.45,
+  holdSeconds: 0.35,
+  flickerGapSeconds: 0.6,
+  uppercase: true,
+};
+
+export const DEFAULT_CAPTION_STYLE = {
+  font: "Arial-BoldMT",
+  size: 90,
+  textColor: 0xffffff,
+  highlightColor: 0xffd400,
+  strokeColor: 0x000000,
+  strokeWidth: 8,
+  posIndex: 0 as const,
+  reveal: true,
+  highlight: true,
+  pop: true,
+  shadow: false,
+};
+
+/** Chunking: only kicks in once a single extraction would exceed the Groq upload ceiling.
+ * 10 minutes of 16kHz mono FLAC comfortably clears 24.5MB with room to spare; 30s of overlap
+ * gives Whisper enough shared context on both sides of a cut for onset/word continuity. */
+export const CHUNK_MAX_SECONDS = 600;
+export const CHUNK_OVERLAP_SECONDS = 30;

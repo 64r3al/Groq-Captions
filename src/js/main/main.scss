@@ -83,8 +83,36 @@
   gap: 8px;
 }
 
-.row input {
+.row > input {
   flex: 1;
+}
+
+.row > .field {
+  flex: 1;
+  min-width: 0;
+}
+
+.field.small input,
+.field.small select {
+  font-size: 0.85em;
+  padding: 4px 6px;
+}
+
+input[type="color"] {
+  padding: 2px;
+  height: 26px;
+}
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.82em;
+  color: var(--gc-fg-muted);
+}
+
+.checkbox-row input {
+  margin: 0;
 }
 
 .row.space-between {

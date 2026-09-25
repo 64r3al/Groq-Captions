@@ -64,3 +64,44 @@ export interface ApiKeyStatus {
   /** Last 4 characters only, for display; the real key never round-trips to the UI unnecessarily. */
   last4: string;
 }
+
+// --- Phase 2: caption building ------------------------------------------------------------
+
+/** A caption group as the panel computes it (src/shared/captions.ts's CaptionGroup) and hands
+ * to the host in one evalTS call. Plain data only — JSON-serializable, since evalTS
+ * JSON.stringifies every argument across the panel/ExtendScript boundary. */
+export interface CaptionGroupData {
+  words: TranscriptWord[];
+  start: number;
+  end: number;
+  text: string;
+}
+
+/** 0-3, matching src/shared/constants.ts's POSITION_OPTIONS (Bottom/Lower third/Center/Top). */
+export type CaptionPositionIndex = 0 | 1 | 2 | 3;
+
+/** Style + animation toggles for buildCaptions. Colors are 0xRRGGBB ints (never negative,
+ * always JSON-safe) rather than AE's native [0-1,0-1,0-1] float triples, so the panel's color
+ * pickers (which work in hex) don't need a round-trip conversion just to cross the bridge. */
+export interface CaptionStyle {
+  font: string;
+  size: number;
+  textColor: number;
+  highlightColor: number;
+  strokeColor: number;
+  strokeWidth: number;
+  posIndex: CaptionPositionIndex;
+  reveal: boolean;
+  highlight: boolean;
+  pop: boolean;
+  shadow: boolean;
+  /** Show each word this many frames before its own start (see shared/captions.ts#revealTimes,
+   * which the host recomputes itself from each group's already comp-time word starts). */
+  leadInFrames: number;
+}
+
+export interface BuildCaptionsResult {
+  words: number;
+  captions: number;
+  precompName: string;
+}
