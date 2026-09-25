@@ -1,9 +1,10 @@
 # Architecture
 
 Per the master prompt's "before writing code" request: architecture, folder structure, data
-model, and open questions/risks. This is written after Phase 1 exists, since the concrete
+model, and open questions/risks. Originally written after Phase 1, since the concrete
 scaffold made several of these decisions easier to explain precisely than describing them in
-the abstract — but it covers the full plan, not just what's built so far.
+the abstract, and updated as Phase 2 (word-sync + comp building) landed — but it covers the
+full plan, not just what's built so far.
 
 ## Platform choice: CEP (not UXP)
 
@@ -32,7 +33,8 @@ vite.config.ts              Panel build (React, → dist/cep/js)
 vite.es.config.ts           ExtendScript build (TS → ES3, → dist/cep/jsx/index.js)
 
 src/jsx/                    Host code — runs inside After Effects as ExtendScript (ES3)
-  aeft/aeft.ts                 Functions callable from the panel via evalTS()
+  aeft/aeft.ts                 evalTS-callable functions: layer info, ffmpeg picker,
+                                  buildCaptions() (comp/text-layer generation, Phase 2)
   lib/json2.js                 JSON polyfill (ES3 has no native JSON)
   index.ts                     Picks the right per-app module and exports the Scripts type
 
@@ -40,24 +42,34 @@ src/js/                     Panel code — runs in CEP's Chromium/Node context
   main/
     App.tsx                    Tab shell (Transcribe / Edit / Style / Export / Settings)
     components/                One component per tab
+      TranscribeTab.tsx           Selection, model/language, Generate Transcript (+chunking)
+      CaptionBuilder.tsx           Sync/grouping/style controls, Build/Rebuild Captions (Phase 2)
+      SettingsTab.tsx               API key + ffmpeg
   lib/
     services/                  Node-side business logic (this project's, not bolt-cep's)
       env.ts                     Node-availability guard, settings-dir resolution
       settingsStore.ts           Encrypted-at-rest local settings (API key, ffmpeg path)
       apiKey.ts                  Key resolution (Settings > .env.local) + key testing
       ffmpeg.ts                  Locate ffmpeg, extract trimmed audio in the background
+      onset.ts                    ffmpeg PCM decode -> src/shared/onset.ts's RMS detection
       groq.ts                    Groq Whisper API client (manual multipart, 429 backoff)
       theme.ts                   Match the host app's current color theme
     cep/, utils/                bolt-cep's CEP glue (CSInterface, evalTS, node.ts, theming)
 
-src/shared/                 Types/constants used by both host and panel
-  types.ts                    SelectedAudioLayerInfo, TranscriptWord/Result, ApiKeyStatus
-  constants.ts                 Groq URLs, upload limits, model/language option lists
+src/shared/                 Pure logic + types shared between panel and host, no CEP/AE
+                               imports, unit tested with Vitest (npm run test, 56 tests)
+  types.ts                    SelectedAudioLayerInfo, TranscriptWord/Result, CaptionGroupData/
+                                 CaptionStyle, ApiKeyStatus
+  constants.ts                 Groq URLs, upload limits, sync/grouping/style/chunking defaults
+  sync.ts                       source->comp time mapping, frame quantization, sync
+  captions.ts                    caption grouping, line wrapping, reveal timing
+  onset.ts                       RMS envelope + nearest-onset detection math
+  chunking.ts                    long-audio chunk planning + overlap-aware stitching
 
 docs/ARCHITECTURE.md        This file
 ```
 
-## Data flow (Phase 1)
+## Data flow (Phase 1 + 2)
 
 ```
  ExtendScript (src/jsx/aeft/aeft.ts)
@@ -65,22 +77,32 @@ docs/ARCHITECTURE.md        This file
                                       sourceInSeconds, sourceDurationSeconds, ... }
              │  evalTS (JSON over evalScript)
              ▼
- CEP panel (src/js/main/components/TranscribeTab.tsx)
-   1. resolveApiKey()            settings.json (encrypted) → .env.local → none
-   2. findFfmpeg() + extractAudio()   child_process, background, → temp .flac
-   3. transcribe()                https POST (manual multipart) → Groq Whisper
-   4. normalizeWords()            verbose_json → flat TranscriptWord[]
-             │
+ CEP panel — Transcribe tab (src/js/main/components/TranscribeTab.tsx)
+   1. resolveApiKey()                    settings.json (encrypted) → .env.local → none
+   2. findFfmpeg() + extractAudio()       child_process, background, → temp .flac
+      (or planChunks()+multiple extractAudio() calls if longer than CHUNK_MAX_SECONDS)
+   3. transcribe() [per chunk]            https POST (manual multipart) → Groq Whisper
+   4. normalizeWords() / stitchTranscriptChunks()   verbose_json → flat TranscriptWord[]
+             │  raw words, source-relative seconds
              ▼
-   rendered as text + a per-word timestamp table
+ CEP panel — Captions section (src/js/main/components/CaptionBuilder.tsx)
+   5. refineOnsets()         ffmpeg PCM decode + RMS envelope → onset-snapped starts
+   6. syncWords()             source time → comp time → frame-quantized (shared/sync.ts)
+   7. buildGroups()           words → captions with on-screen start/end + wrapped text
+             │  CaptionGroupData[] + CaptionStyle, JSON-serializable
+             │  evalTS("buildCaptions", compId, groups, style)
+             ▼
+ ExtendScript (src/jsx/aeft/aeft.ts#buildCaptions)
+   8. One text layer per caption, Expression-Selector word animators, one precompose,
+      one app.beginUndoGroup — see "Comp building" below.
 ```
 
-Nothing gets written back into the AE project in Phase 1 — that's deliberate. Building
-comps/layers is real, order-dependent AE-DOM work (Phase 2), and mixing it into the same
-pass as "does transcription work at all" would make failures harder to attribute to either
-half. `getSelectedAudioLayerInfo()` already returns everything Phase 2's comp builder will
-need (`startTime`, `stretchPercent`, `inPoint`/`outPoint`, `compFrameRate`, `compDuration`)
-so that step is additive, not a rewrite.
+Phase 1 deliberately wrote nothing back into the AE project: building comps/layers is real,
+order-dependent AE-DOM work, and mixing it into the same pass as "does transcription work
+at all" would have made failures harder to attribute to either half.
+`getSelectedAudioLayerInfo()` was designed in Phase 1 to already return everything Phase 2's
+comp builder needs (`startTime`, `stretchPercent`, `inPoint`/`outPoint`, `compFrameRate`,
+`compDuration`), so step 5-8 above turned out to be additive, not a rewrite of steps 1-4.
 
 ## Data model
 
@@ -103,29 +125,39 @@ interface TranscriptResult {
 }
 ```
 
-### Phase 2 addition (not yet implemented): the on-disk transcript JSON
+### `CaptionGroupData` / `CaptionStyle` (panel → host, per Build/Rebuild Captions click)
 
-The master prompt's "performance-first" comp-building approach — one text layer driven by
-`footage("captions.json").sourceData` plus Expression Selectors, rather than baking N text
-layers per caption immediately — needs a persisted, editable JSON file imported into the AE
-project. Planned shape, extending `TranscriptWord` with the comp-time mapping and grouping
-Phase 2 adds:
+What the panel hands to `buildCaptions()` in one `evalTS` call, already fully computed
+(comp-time, frame-quantized, grouped) so the host does nothing but AE-object-model work:
 
 ```ts
-interface CaptionsFile {
-  version: 1;
-  compId: number;
-  fps: number;
-  words: { text: string; start: number; end: number }[]; // comp time, frame-quantized
-  groups: { startWord: number; endWord: number; start: number; end: number; text: string }[];
-  style: { /* font, size, colors, stroke, position, animation preset+params, ... */ };
+interface CaptionGroupData {
+  words: TranscriptWord[]; // comp-time seconds now, not source-relative
+  start: number;
+  end: number;
+  text: string;            // "\n" between wrapped lines
+}
+interface CaptionStyle {
+  font: string; size: number;
+  textColor: number; highlightColor: number; strokeColor: number; strokeWidth: number; // 0xRRGGBB
+  posIndex: 0 | 1 | 2 | 3;  // Bottom / Lower third / Center / Top
+  reveal: boolean; highlight: boolean; pop: boolean; shadow: boolean;
+  leadInFrames: number;
 }
 ```
 
-Editing a word/timing in the Edit tab (Phase 3) means rewriting this file and letting the
-expressions pick it up — no layer rebuild, per the master prompt. "Bake to layers" stays
-available as an explicit opt-in for manual per-layer tweaking, reusing the
-`addWordAnimator`/Expression-Selector logic already proven in `Groq_Captions.jsx`.
+### Not yet built: the on-disk `captions.json` + single-text-layer approach
+
+The master prompt's "performance-first" comp-building idea — one text layer driven by
+`footage("captions.json").sourceData` plus Expression Selectors, rather than one text layer
+per caption — is real and worth doing, but Phase 2 builds N discrete precomposed text
+layers instead (closer to `Groq_Captions.jsx`'s original design). Deliberately deferred
+rather than built speculatively: the whole point of the JSON-driven approach is "edit a
+word/timing and the comp updates without a rebuild," which only pays off once Phase 3's
+editor exists to actually DO that editing. Building it now would mean guessing at the
+editor's needs; building it alongside the editor means the file shape is driven by what the
+editor actually needs to read and write. "Bake to layers" (today's Phase 2 behavior) stays
+available either way as an explicit option for manual per-layer tweaking outside the editor.
 
 ### Settings (`settingsStore.ts`, per-OS user profile dir, not in the repo)
 
@@ -151,14 +183,20 @@ interface StoredSettings {
   locally-held key is what the master prompt names as the acceptable fallback ("OS keychain
   if possible, otherwise encrypted local storage"); upgrading to a real keychain is a good
   Phase 5 polish item.
-- **No audio chunking yet.** The master prompt asks for splitting long audio into overlapping
-  chunks with word de-duplication at the seams — real complexity that deserves its own pass
-  rather than being bolted onto "does the basic call work." Phase 1 enforces the 25 MB/~20
-  min ceiling with a clear error (same as the prototype); chunking is called out as unbuilt
-  here rather than silently half-done.
-- **No onset refinement (RMS energy snapping) yet.** Explicitly a Phase 2 item per the
-  master prompt's own phase list, and it's meaningless without the frame-quantization/comp-
-  time-mapping it sits on top of, which also lands in Phase 2.
+- **Chunking resolves overlaps by time, not text matching.** `shared/chunking.ts`'s
+  `stitchTranscriptChunks` splits each pair of adjacent (overlapping) chunks at a single
+  deterministic cutover — the midpoint of their shared audio — rather than trying to match
+  up Whisper's transcription of the same audio twice (which isn't guaranteed to tokenize
+  identically at the seam). Onset refinement is deliberately not offered for a chunked
+  transcript (no single audio file represents the whole clip to re-analyze); the UI states
+  this plainly rather than silently skipping it.
+- **Onset refinement snaps to the nearest rising edge, not the loudest point.** A word's
+  audible start is where energy *begins*, not its peak — snapping to the peak would
+  systematically land inside the word. `findNearestOnset` (shared/onset.ts) also picks
+  whichever of several nearby rising edges is closest to Whisper's reported time (relevant
+  when words are close together) and ignores energy that was already sustained above
+  threshold going into the search window (so it doesn't mistake "still mid-word from
+  before" for a new onset).
 - **`installModules: []` in `cep.config.ts` is correct, not an oversight.** That field copies
   third-party npm packages into the packaged extension so `require("pkg")` resolves at
   runtime in an installed ZXP (dev mode has full `node_modules`, but the shipped package
@@ -196,12 +234,24 @@ interface StoredSettings {
 
 ## Open questions / risks
 
-1. **I can't run After Effects here.** This sandbox has no AE install, so Phase 1 is
-   verified by `npm run build`, `npm run typecheck`, and careful reading — not by actually
-   clicking Generate in a panel. Please test against the steps in `README.md` and report
-   back; I'd expect the highest-risk spot to be `getHostEnvironment()`/`appSkinInfo` theming
-   (typed as `any` in Adobe's own `.d.ts`, so a shape mismatch wouldn't be caught by
-   `tsc`) and the exact CSXS/debug-port version bolt-cep picks for your AE version.
+1. **I can't run After Effects here.** This sandbox has no AE install, so both phases are
+   verified by `npm run build`/`typecheck`/`test` and careful reading of types-for-adobe's
+   declarations — not by actually clicking through the panel. The Step 0 audit process (see
+   git history / PR discussion) already caught one real bug this way missed by every
+   automated check (a `process.env` read that would have broken the extension from loading
+   at all in AE — see the `cep.config.ts` bullet above) by grepping compiled *output*, not
+   just running the build; that's the level of scrutiny this kind of gap needs. For Phase 2
+   specifically, the highest-risk untested spots are: the Expression Selector "Based On:
+   Words" fallback search in `setBasedOnWords` (only the primary `ADBE Text Range Type2`
+   path is exercised by types-for-adobe's declarations; the name-search fallback exists
+   because the prototype needed it on *some* AE build, but which one wasn't recorded), and
+   whether "ADBE Text Fill Color"'s value-shape fallback (4-value RGBA tried before 3-value
+   RGB) actually needs both branches on current AE versions or just one. Please run the
+   acceptance test in **How to test Phase 2** (README) and report back. Phase 1's own
+   previously-flagged risk here remains open too: `getHostEnvironment()`/`appSkinInfo`
+   theming (typed as `any` in Adobe's own `.d.ts`) and the exact CSXS/debug-port version for
+   your AE build (README now covers CEP 11 vs. 12 explicitly, including the known CEP 12
+   PlayerDebugMode bug).
 2. **ffmpeg auto-detection is best-effort.** The candidate-path list is carried over from the
    prototype (winget/choco/scoop on Windows, homebrew/usr-local/usr on macOS) plus a
    `where`/`command -v` fallback. If your install lives somewhere else, "Locate ffmpeg…" in
@@ -218,15 +268,40 @@ interface StoredSettings {
 5. **Vocabulary prompt token counting is a word-count approximation**, not the actual
    tokenizer Groq uses server-side, so the 224-token warning in the Transcribe tab is a
    rough guardrail, not an exact one.
+6. **Known, deliberately-not-fixed findings from the Step 0 audit** (reported in full then;
+   summarized here so they're not only in chat history): `ffmpeg.ts#findFfmpeg`'s `which()`
+   fallback uses a synchronous `execSync` (blocks the panel's own render thread briefly, not
+   After Effects itself); `groq.ts` reads the whole audio file synchronously and re-reads it
+   on every 429 retry; `SettingsTab.tsx`'s handlers have no try/catch, so a settings-file
+   write failure fails silently; switching tabs mid-generation unmounts `TranscribeTab`
+   without cancelling in-flight work, which keeps running invisibly. None of these are
+   correctness bugs in the sync/caption-building logic Phase 2 added; they're pre-existing
+   Phase 1 robustness gaps, left as-is per the audit's scope (fix what the README's own test
+   checklist promises, report the rest).
 
 ## Phase status
 
-- **Phase 1 (this PR): done.** Scaffold, manifest/debug/ZXP config, typed bridge, Settings
-  tab (API key + ffmpeg), audio extraction, raw transcript view in the Transcribe tab.
-- **Phase 2 (next):** frame-quantized time mapping + onset refinement, caption grouping,
-  `captions.json` + comp/text-layer generation with basic style, ported from
-  `Groq_Captions.jsx`'s proven `mapToComp`/`applySync`/`buildGroups`/Expression-Selector code.
-- **Phase 3:** live transcript editor, full style controls + presets.
-- **Phase 4:** animation presets, Social/Subtitle modes, SRT/VTT/JSON export.
-- **Phase 5:** caching, chunked long-audio transcription, real keychain integration, bundled
-  ffmpeg, polish, ZXP signing/release packaging.
+- **Phase 1: done.** Scaffold, manifest/debug/ZXP config, typed bridge, Settings tab (API
+  key + ffmpeg), audio extraction, raw transcript view in the Transcribe tab.
+- **Phase 2: done.** Frame-quantized time mapping (`shared/sync.ts`) + RMS-envelope onset
+  refinement (`shared/onset.ts` + `lib/services/onset.ts`), caption grouping
+  (`shared/captions.ts`), and comp/text-layer generation with per-word Expression-Selector
+  animators (`jsx/aeft/aeft.ts#buildCaptions`) — all ported from `Groq_Captions.jsx`'s
+  proven `mapToComp`/`applySync`/`buildGroups`/animator code, now unit tested (56 tests,
+  `npm run test`) and wired end-to-end in the panel (`CaptionBuilder.tsx`). Also closed the
+  Phase 1 "no chunking" gap: audio over `CHUNK_MAX_SECONDS` is split, transcribed per chunk,
+  and stitched (`shared/chunking.ts`). Not yet a `captions.json`-driven single-text-layer
+  approach — each caption is still its own layer, precomposed; that performance-oriented
+  rework is worth doing once the Phase 3 editor needs live-editable timing anyway (see the
+  next section).
+- **Phase 3:** live transcript editor, full style controls (font picker, background box,
+  safe margins) + savable presets. This is also the natural point to switch comp-building
+  to the master prompt's `captions.json`-driven single-text-layer approach, since "edit a
+  word, see it update live" needs exactly that (rewrite the JSON, no layer rebuild) and
+  Phase 2 intentionally didn't build it speculatively before there was an editor to need it.
+- **Phase 4:** animation presets beyond pop/highlight/reveal, Social vs. Subtitle modes,
+  SRT/VTT/JSON export.
+- **Phase 5:** transcript caching (skip re-transcribing an unchanged clip), real keychain
+  integration, bundled ffmpeg, async/perf pass on the remaining synchronous calls flagged in
+  the Phase 1 audit (`findFfmpeg`'s `execSync`, `groq.ts`'s whole-file `readFileSync`), ZXP
+  signing/release packaging.
