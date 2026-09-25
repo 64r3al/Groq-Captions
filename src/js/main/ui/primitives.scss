@@ -628,38 +628,25 @@ textarea.gc-input {
   gap: var(--gc-space-1);
 }
 
-.gc-staged-step {
-  display: flex;
-  align-items: center;
-  gap: var(--gc-space-1);
-  font-size: var(--gc-text-2xs);
-  color: var(--gc-text-muted);
-  white-space: nowrap;
-}
-
-.gc-staged-step--active {
-  color: var(--gc-text-primary);
-  font-weight: var(--gc-weight-medium);
-}
-
-.gc-staged-step--done {
-  color: var(--gc-text-secondary);
-}
-
 .gc-staged-dot {
-  width: 6px;
-  height: 6px;
+  @include mixins.transition(background-color, box-shadow);
+  width: 10px;
+  height: 10px;
   border-radius: 50%;
   background: var(--gc-text-muted);
   flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--gc-surface-0);
 }
 
-.gc-staged-step--active .gc-staged-dot {
+.gc-staged-dot--active {
   background: var(--gc-accent);
   box-shadow: 0 0 0 3px var(--gc-accent-wash);
 }
 
-.gc-staged-step--done .gc-staged-dot {
+.gc-staged-dot--done {
   background: var(--gc-success);
 }
 
@@ -668,6 +655,11 @@ textarea.gc-input {
   height: 1px;
   background: var(--gc-border);
   min-width: 8px;
+}
+
+.gc-staged-label {
+  font-size: var(--gc-text-2xs);
+  color: var(--gc-text-secondary);
 }
 
 // ==========================================================================================

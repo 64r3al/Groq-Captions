@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import { Check } from "lucide-react";
 
 export interface ProgressProps {
@@ -36,28 +37,30 @@ export interface StagedProgressProps {
   activeKey: string;
 }
 
-/** The header-strip indicator for a multi-stage pipeline (e.g. Extracting -> Transcribing ->
- * Syncing -> Building) shown in the sticky action bar while a generation run is in progress. */
+/** The status indicator for a multi-stage pipeline (e.g. Extracting -> Transcribing -> Syncing
+ * -> Building), shown in the sticky action bar while a generation run is in progress. Only the
+ * current step's label is shown as text - a dot per step never has room for four full labels
+ * side by side at a 280px panel width, so the dots carry the "where in the pipeline" signal and
+ * the label carries the "what's happening now" one. */
 export const StagedProgress = ({ steps, activeKey }: StagedProgressProps) => {
   const activeIndex = steps.findIndex((s) => s.key === activeKey);
+  const activeStep = steps[activeIndex];
   return (
     <div className="gc-staged-progress">
       <div className="gc-staged-steps">
         {steps.map((step, i) => {
           const done = activeIndex >= 0 && i < activeIndex;
           const active = i === activeIndex;
-          const state = done ? "gc-staged-step--done" : active ? "gc-staged-step--active" : "";
+          const state = done ? "gc-staged-dot--done" : active ? "gc-staged-dot--active" : "";
           return (
-            <>
-              <span key={step.key} className={`gc-staged-step ${state}`}>
-                <span className="gc-staged-dot">{done && <Check size={6} strokeWidth={3} />}</span>
-                {step.label}
-              </span>
-              {i < steps.length - 1 && <span key={`${step.key}-connector`} className="gc-staged-connector" />}
-            </>
+            <Fragment key={step.key}>
+              <span className={`gc-staged-dot ${state}`}>{done && <Check size={8} strokeWidth={3} />}</span>
+              {i < steps.length - 1 && <span className="gc-staged-connector" />}
+            </Fragment>
           );
         })}
       </div>
+      {activeStep && <span className="gc-staged-label">{activeStep.label}…</span>}
     </div>
   );
 };
