@@ -1,64 +1,1664 @@
-import { useEffect, useState } from "react";
-import { Settings as SettingsIcon, X } from "lucide-react";
-import { applyHostTheme } from "../lib/services/theme";
-import { Button } from "./ui/Button";
-import { CollapsibleSection } from "./ui/SectionHeader";
-import { EmptyState } from "./ui/EmptyState";
-import { TranscribeTab } from "./components/TranscribeTab";
+import { useEffect, useRef, useState } from "react";
+import { evalTS } from "../lib/utils/bolt";
+import { resolveApiKey } from "../lib/services/apiKey";
+import { removeTempFile } from "../lib/services/ffmpeg";
+import { refineWordTiming, transcribeSelection, type TranscriptionJob } from "../lib/services/pipeline";
 import { SettingsTab } from "./components/SettingsTab";
+import { ToastProvider, useToast } from "./ui/Toast";
+import { hexToInt, intToHex } from "./ui/color";
+import {
+  DEFAULT_CAPTION_STYLE,
+  DEFAULT_GROUPING_OPTIONS,
+  DEFAULT_SYNC_OPTIONS,
+  MODEL_OPTIONS,
+  LANGUAGE_OPTIONS,
+  VOCAB_MAX_TOKENS,
+} from "../../shared/constants";
+import type {
+  BuildCaptionsResult,
+  CaptionGroupData,
+  CaptionPositionIndex,
+  CaptionStyle,
+  GroqModel,
+  SelectedAudioLayerInfo,
+  TranscriptWord,
+} from "../../shared/types";
+import { VIRAL_PRESETS, type ViralPreset } from "../../shared/presets";
+import { PresetLibraryModal } from "./features/PresetLibraryModal";
+import { syncWords } from "../../shared/sync";
+import { buildGroups } from "../../shared/captions";
+import { displayName, version } from "../../shared/shared";
 import "./app.scss";
 
-export const App = () => {
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [exportOpen, setExportOpen] = useState(false);
+type Tab = "transcribe" | "style" | "settings";
+type AspectRatio = "9:16" | "16:9" | "1:1";
+
+const SAMPLE_TRANSCRIPT: TranscriptWord[] = [
+  { text: "CREATE", start: 0.1, end: 0.55 },
+  { text: "VIRAL", start: 0.6, end: 1.15 },
+  { text: "CAPTIONS", start: 1.2, end: 1.7 },
+  { text: "IN", start: 1.75, end: 1.95 },
+  { text: "SECONDS", start: 2.0, end: 2.6 },
+];
+
+export const AppContent = () => {
+  const { show: showToast } = useToast();
+  const [currentTab, setCurrentTab] = useState<Tab>("transcribe");
+  const [isLibraryOpen, setIsLibraryOpen] = useState(false);
+
+  // Selection info
+  const [selection, setSelection] = useState<SelectedAudioLayerInfo | null>(null);
+  const [loadingSelection, setLoadingSelection] = useState(false);
+
+  // Groq Speech Engine Settings
+  const [model, setModel] = useState<GroqModel>("whisper-large-v3-turbo");
+  const [language, setLanguage] = useState("");
+  const [glossary, setGlossary] = useState<string[]>([]);
+  const [newGlossaryTag, setNewGlossaryTag] = useState("");
+  const [isAddingTag, setIsAddingTag] = useState(false);
+
+  // Audio / Transcribe state
+  const [isTranscribing, setIsTranscribing] = useState(false);
+  const [transcribeStatus, setTranscribeStatus] = useState("Select an audio layer, then transcribe.");
+  // Sample words drive the live preview until a real transcript exists; hasTranscript gates Build
+  // so the sample is never built into the user's comp.
+  const [activeWords, setActiveWords] = useState<TranscriptWord[]>(SAMPLE_TRANSCRIPT);
+  const [hasTranscript, setHasTranscript] = useState(false);
+  const [selectionError, setSelectionError] = useState<string | null>(null);
+  const jobRef = useRef<TranscriptionJob | null>(null);
+  // Audio the current transcript came from, kept for onset refinement at build time.
+  const transcriptAudio = useRef<{ path: string | null; isTemp: boolean }>({ path: null, isTemp: false });
+  // The layer the current transcript belongs to; Build maps timing against this, not whatever
+  // happens to be selected later.
+  const transcribedLayer = useRef<SelectedAudioLayerInfo | null>(null);
+
+  // Waveform state
+  const [scrubberPos, setScrubberPos] = useState(34); // %
+  const [isPlaying, setIsPlaying] = useState(true);
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
+  const [activeWordIndex, setActiveWordIndex] = useState(1); // 'VIRAL'
+  const [currentFrame, setCurrentFrame] = useState(426);
+  const totalFrames = 1275;
+  const compDuration = 42.5;
+
+  // Live Preview Canvas state
+  const [aspectRatio, setAspectRatio] = useState<AspectRatio>("9:16");
+
+  // Animation Preset state
+  const [selectedPresetId, setSelectedPresetId] = useState<string>("single-word-center");
+
+  // Kinetic Inspector Props
+  const [fontSize, setFontSize] = useState(78);
+  const [wordsPerGroup, setWordsPerGroup] = useState<1 | 2 | 3>(2);
+  const [bounceScale, setBounceScale] = useState(28);
+  const [yOffset, setYOffset] = useState(-120);
+  const [baseColor, setBaseColor] = useState("#FFFFFF");
+  const [highlightColor, setHighlightColor] = useState("#D0BCFF");
+  const [autoSnapOnsets, setAutoSnapOnsets] = useState(true);
+  const [splitOnPauses, setSplitOnPauses] = useState(true);
+
+  // Library search / filter state for in-tab browsing
+  const [libraryFilter, setLibraryFilter] = useState("All");
+  const [librarySearch, setLibrarySearch] = useState("");
+
+  // Building in AE state
+  const [isBuilding, setIsBuilding] = useState(false);
+
+  // Current active preset object
+  const currentPreset = VIRAL_PRESETS.find((p) => p.id === selectedPresetId) || VIRAL_PRESETS[0];
+
+  const refreshSelection = async (): Promise<SelectedAudioLayerInfo | null> => {
+    setLoadingSelection(true);
+    try {
+      const info = await evalTS("getSelectedAudioLayerInfo");
+      setSelection(info);
+      setSelectionError(null);
+      return info;
+    } catch (err: any) {
+      setSelection(null);
+      setSelectionError(err?.message || String(err));
+      return null;
+    } finally {
+      setLoadingSelection(false);
+    }
+  };
+
+  const releaseTranscriptAudio = () => {
+    const { path, isTemp } = transcriptAudio.current;
+    if (path && isTemp) removeTempFile(path);
+    transcriptAudio.current = { path: null, isTemp: false };
+  };
 
   useEffect(() => {
-    applyHostTheme();
+    refreshSelection();
+    return () => {
+      jobRef.current?.cancel();
+      releaseTranscriptAudio();
+    };
   }, []);
 
+  // Playback loop for live preview (Automatic, Real-Time Synchronized)
+  useEffect(() => {
+    if (!isPlaying) return;
+    const intervalMs = Math.round(520 / playbackSpeed);
+    const interval = window.setInterval(() => {
+      setActiveWordIndex((prev) => (prev + 1) % activeWords.length);
+      setCurrentFrame((prev) => (prev >= totalFrames ? 1 : prev + 15));
+      setScrubberPos((prev) => (prev >= 98 ? 2 : prev + 2));
+    }, intervalMs);
+    return () => window.clearInterval(interval);
+  }, [isPlaying, activeWords.length, playbackSpeed]);
+
+  // Handle Preset selection
+  const applyPreset = (preset: ViralPreset) => {
+    setSelectedPresetId(preset.id);
+    setFontSize(preset.fontSize);
+    setWordsPerGroup(preset.wordsPerGroup);
+    setBounceScale(preset.bounceScale);
+    setYOffset(preset.yOffset);
+    setBaseColor(preset.baseColor);
+    setHighlightColor(preset.highlightColor);
+
+    showToast({
+      title: `${preset.name} Preset Applied`,
+      description: `${preset.wordsPerGroup} words/group • ${preset.bounceScale}% bounce • ${preset.tag}`,
+      variant: "success",
+    });
+  };
+
+  const handleSelectPresetById = (id: string) => {
+    const p = VIRAL_PRESETS.find((item) => item.id === id);
+    if (p) applyPreset(p);
+  };
+
+  // Add tag to Glossary
+  const handleAddGlossaryTag = () => {
+    if (newGlossaryTag.trim() && !glossary.includes(newGlossaryTag.trim())) {
+      setGlossary([...glossary, newGlossaryTag.trim()]);
+      setNewGlossaryTag("");
+      setIsAddingTag(false);
+    }
+  };
+
+  const removeGlossaryTag = (tag: string) => {
+    setGlossary(glossary.filter((t) => t !== tag));
+  };
+
+  const handleCancelTranscribe = () => {
+    jobRef.current?.cancel();
+  };
+
+  const handleTranscribe = async () => {
+    const info = await refreshSelection();
+    if (!info) {
+      showToast({
+        title: "No audio layer selected",
+        description: "Select an audio or video layer with audio in the active comp.",
+        variant: "error",
+      });
+      return;
+    }
+
+    let apiKey: string | null;
+    try {
+      apiKey = resolveApiKey().key;
+    } catch (err: any) {
+      showToast({ title: "Can't read settings", description: err?.message || String(err), variant: "error" });
+      return;
+    }
+    if (!apiKey) {
+      showToast({
+        title: "API Key Required",
+        description: "Add your Groq API key in Settings first.",
+        variant: "error",
+      });
+      setCurrentTab("settings");
+      return;
+    }
+
+    const prompt = glossary.join(", ");
+    if (prompt.split(/\s+/).filter(Boolean).length > VOCAB_MAX_TOKENS) {
+      showToast({
+        title: "Glossary too long",
+        description: `Keep the glossary under ~${VOCAB_MAX_TOKENS} words.`,
+        variant: "error",
+      });
+      return;
+    }
+
+    releaseTranscriptAudio();
+    setIsTranscribing(true);
+    const job = transcribeSelection(
+      info,
+      { apiKey, model, language: language || undefined, prompt: prompt || undefined },
+      (_stage, text) => setTranscribeStatus(text)
+    );
+    jobRef.current = job;
+    try {
+      const { transcript, audioPath, isTempAudio } = await job.promise;
+      transcriptAudio.current = { path: audioPath, isTemp: isTempAudio };
+      if (!transcript.words.length) throw new Error("Groq returned no words for this audio.");
+      transcribedLayer.current = info;
+      setActiveWords(transcript.words);
+      setActiveWordIndex(0);
+      setHasTranscript(true);
+      setTranscribeStatus(`Done: ${transcript.words.length} words.`);
+      showToast({
+        title: "Transcription Complete",
+        description: `${transcript.words.length} words with word-level timestamps.`,
+        variant: "success",
+      });
+    } catch (err: any) {
+      const message = err?.message || String(err);
+      setTranscribeStatus(message === "Cancelled." ? "Cancelled." : "Transcription failed.");
+      if (message !== "Cancelled.") {
+        showToast({ title: "Transcription Failed", description: message, variant: "error" });
+      }
+    } finally {
+      jobRef.current = null;
+      setIsTranscribing(false);
+    }
+  };
+
+  const handleBuildInAe = async () => {
+    const info = transcribedLayer.current;
+    if (!hasTranscript || !info) {
+      showToast({
+        title: "Nothing to build yet",
+        description: "Transcribe an audio layer first.",
+        variant: "error",
+      });
+      return;
+    }
+
+    setIsBuilding(true);
+    try {
+      const words = autoSnapOnsets
+        ? await refineWordTiming(activeWords, transcriptAudio.current.path)
+        : activeWords;
+
+      const synced = syncWords(
+        words,
+        {
+          mapping: {
+            startTime: info.startTime,
+            sourceOffset: info.sourceInSeconds,
+            stretchPercent: info.stretchPercent,
+          },
+          inPoint: info.inPoint,
+          outPoint: info.outPoint,
+        },
+        { fps: info.compFrameRate, offsetFrames: DEFAULT_SYNC_OPTIONS.offsetFrames }
+      );
+
+      const groups: CaptionGroupData[] = buildGroups(synced, {
+        maxWords: wordsPerGroup,
+        maxCharsPerLine: DEFAULT_GROUPING_OPTIONS.maxCharsPerLine,
+        maxLines: DEFAULT_GROUPING_OPTIONS.maxLines,
+        pauseBreakSeconds: splitOnPauses ? DEFAULT_GROUPING_OPTIONS.pauseBreakSeconds : 999,
+        holdSeconds: DEFAULT_GROUPING_OPTIONS.holdSeconds,
+        flickerGapSeconds: DEFAULT_GROUPING_OPTIONS.flickerGapSeconds,
+        fps: info.compFrameRate,
+        compDuration: info.compDuration,
+        uppercase: true,
+      });
+      if (!groups.length) throw new Error("No words fall inside the layer's in/out range.");
+
+      const style: CaptionStyle = {
+        font: currentPreset.font || DEFAULT_CAPTION_STYLE.font,
+        size: fontSize,
+        textColor: hexToInt(baseColor) ?? DEFAULT_CAPTION_STYLE.textColor,
+        highlightColor: hexToInt(highlightColor) ?? DEFAULT_CAPTION_STYLE.highlightColor,
+        strokeColor: hexToInt(currentPreset.strokeColor) ?? DEFAULT_CAPTION_STYLE.strokeColor,
+        strokeWidth: currentPreset.strokeWidth ?? DEFAULT_CAPTION_STYLE.strokeWidth,
+        posIndex: (currentPreset.posIndex ?? DEFAULT_CAPTION_STYLE.posIndex) as CaptionPositionIndex,
+        reveal: currentPreset.reveal ?? true,
+        highlight: currentPreset.highlight ?? true,
+        pop: bounceScale > 0,
+        bounceScale,
+        yOffset,
+        shadow: currentPreset.shadow ?? true,
+        leadInFrames: DEFAULT_SYNC_OPTIONS.leadInFrames,
+        animMode: currentPreset.animMode,
+      };
+
+      const result = (await evalTS("buildCaptions", info.compId, groups, style)) as BuildCaptionsResult;
+      showToast({
+        title: "Built in After Effects",
+        description: `${result.captions} captions, ${result.words} words, in "${result.precompName}".`,
+        variant: "success",
+      });
+    } catch (err: any) {
+      showToast({ title: "Build Failed", description: err?.message || String(err), variant: "error" });
+    } finally {
+      setIsBuilding(false);
+    }
+  };
+
+  // Format timecode
+  const currentTimeSec = ((scrubberPos / 100) * compDuration).toFixed(1);
+  const timecodeDisplay = `00:${currentTimeSec.padStart(4, "0")} / 00:${compDuration.toFixed(1)}`;
+
+  // Filtered presets for in-tab library
+  const tabFilteredPresets = VIRAL_PRESETS.filter((p) => {
+    const matchesCat = libraryFilter === "All" || p.category === libraryFilter;
+    const matchesSearch =
+      librarySearch.trim() === "" ||
+      p.name.toLowerCase().includes(librarySearch.toLowerCase()) ||
+      p.tag.toLowerCase().includes(librarySearch.toLowerCase()) ||
+      p.description.toLowerCase().includes(librarySearch.toLowerCase());
+    return matchesCat && matchesSearch;
+  });
+
   return (
-    <div className="gc-app">
-      <header className="gc-app-header">
-        <span className="gc-app-wordmark">Pro Caption AE</span>
-        <Button
-          variant="ghost"
-          size="sm"
-          iconOnly
-          aria-label="Settings"
-          icon={<SettingsIcon size={16} />}
-          onClick={() => setSettingsOpen(true)}
-        />
-      </header>
-
-      <main className="gc-app-body">
-        <TranscribeTab onNeedApiKey={() => setSettingsOpen(true)} />
-
-        <CollapsibleSection
-          title="Export"
-          subtitle="SRT, VTT, JSON, plain text"
-          open={exportOpen}
-          onToggle={() => setExportOpen((o) => !o)}
-        >
-          <EmptyState
-            title="Coming soon"
-            description="Export formats are planned for a later update - for now, captions live directly in your After Effects comp."
-          />
-        </CollapsibleSection>
-      </main>
-
-      {settingsOpen && (
-        <div className="gc-app-slideover-backdrop" onClick={() => setSettingsOpen(false)}>
-          <div className="gc-app-slideover" onClick={(e) => e.stopPropagation()} role="dialog" aria-label="Settings">
-            <div className="gc-app-slideover-header">
-              <span>Settings</span>
-              <Button variant="ghost" size="sm" iconOnly aria-label="Close" icon={<X size={16} />} onClick={() => setSettingsOpen(false)} />
+    <div className="bg-surface text-on-surface flex flex-col min-h-screen selection:bg-primary selection:text-on-primary">
+      {/* FIXED TOP HEADER */}
+      <header className="fixed top-0 w-full z-40 bg-surface/90 backdrop-blur-xl pt-safe shadow-[0_1px_8px_rgba(0,0,0,0.4)]">
+        <div className="h-28 px-margin flex flex-col justify-between py-space-sm">
+          {/* Top row: Wordmark, Status, Settings icon, User avatar */}
+          <div className="flex items-center justify-between gap-space-sm">
+            <div className="flex items-center gap-space-sm min-w-0">
+              <div className="w-6 h-6 rounded bg-primary-container/20 flex items-center justify-center shrink-0">
+                <span className="material-symbols-outlined text-primary text-[18px]">graphic_eq</span>
+              </div>
+              <div className="flex items-center gap-space-xs truncate">
+                <span className="font-headline-sm text-headline-sm text-on-surface tracking-tight font-bold truncate">
+                  {displayName}
+                </span>
+                <span className="px-space-xs py-[1px] rounded bg-surface-container-high text-primary font-label-xs text-label-xs shrink-0">
+                  v{version}
+                </span>
+              </div>
             </div>
-            <div className="gc-app-slideover-body">
-              <SettingsTab />
+            <div className="flex items-center gap-space-xs shrink-0">
+              <button
+                onClick={() => setCurrentTab(currentTab === "settings" ? "transcribe" : "settings")}
+                className={`w-8 h-8 flex items-center justify-center rounded transition-colors ${
+                  currentTab === "settings"
+                    ? "text-primary bg-surface-container-high"
+                    : "text-on-surface-variant hover:text-on-surface"
+                }`}
+                aria-label="Settings"
+                title="Settings"
+              >
+                <span className="material-symbols-outlined text-[18px]">settings</span>
+              </button>
             </div>
           </div>
+
+          {/* Layer status bar */}
+          <div className="flex items-center justify-between gap-space-sm bg-surface-container-lowest px-space-sm py-space-xs rounded min-h-[24px]">
+            <div className="flex items-center gap-space-xs min-w-0">
+              <span className="material-symbols-outlined text-primary text-[14px] shrink-0">mic</span>
+              <span className="font-label-xs text-label-xs text-on-surface truncate">
+                {selection?.layerName || selectionError || "No audio layer selected"}
+              </span>
+            </div>
+            <button
+              onClick={() => refreshSelection()}
+              title="Refresh selection"
+              className="font-label-xs text-label-xs text-on-surface-variant shrink-0 flex items-center gap-space-xs hover:text-on-surface"
+            >
+              {selection ? `${selection.compName} • ${selection.sourceDurationSeconds.toFixed(1)}s` : "Refresh"}
+              <span className={`material-symbols-outlined text-[12px] ${loadingSelection ? "animate-spin" : ""}`}>sync</span>
+            </button>
+          </div>
+
+          {/* Segmented Navigation Bar */}
+          <nav className="flex items-center p-space-xs rounded bg-surface-container-lowest gap-space-xs">
+            <button
+              onClick={() => setCurrentTab("transcribe")}
+              className={`flex-1 h-7 flex items-center justify-center px-space-sm rounded transition-all gap-space-xs ${
+                currentTab === "transcribe"
+                  ? "bg-surface-container-highest text-on-surface font-semibold shadow-xs"
+                  : "font-label-sm text-label-sm text-on-surface-variant hover:text-on-surface"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[14px]">subtitles</span>
+              <span>Transcribe</span>
+            </button>
+            <button
+              onClick={() => setCurrentTab("style")}
+              className={`flex-1 h-7 flex items-center justify-center px-space-sm rounded transition-all gap-space-xs ${
+                currentTab === "style"
+                  ? "bg-surface-container-highest text-on-surface font-semibold shadow-xs"
+                  : "font-label-sm text-label-sm text-on-surface-variant hover:text-on-surface"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[14px]">auto_awesome_motion</span>
+              <span>Style &amp; Animation</span>
+            </button>
+            <button
+              onClick={() => setCurrentTab("settings")}
+              className={`flex-1 h-7 flex items-center justify-center px-space-sm rounded transition-all gap-space-xs ${
+                currentTab === "settings"
+                  ? "bg-surface-container-highest text-on-surface font-semibold shadow-xs"
+                  : "font-label-sm text-label-sm text-on-surface-variant hover:text-on-surface"
+              }`}
+            >
+              <span className="material-symbols-outlined text-[14px]">tune</span>
+              <span>Settings</span>
+            </button>
+          </nav>
         </div>
-      )}
+      </header>
+
+      {/* MAIN BODY CONTAINER */}
+      <main className="flex flex-col relative w-full px-margin pt-32 pb-24 bg-surface flex-1">
+        {currentTab === "settings" ? (
+          /* SETTINGS VIEW */
+          <div className="flex flex-col gap-space-sm bg-surface-container rounded-lg p-space-sm shadow-sm">
+            <div className="flex items-center justify-between pb-space-xs border-b border-outline-variant/30">
+              <div className="flex items-center gap-space-xs">
+                <span className="material-symbols-outlined text-primary text-[18px]">tune</span>
+                <span className="font-headline-sm text-headline-sm font-semibold">Extension Settings</span>
+              </div>
+              <button
+                onClick={() => setCurrentTab("transcribe")}
+                className="text-on-surface-variant hover:text-on-surface text-[12px] flex items-center gap-0.5"
+              >
+                Back to Editor <span className="material-symbols-outlined text-[14px]">close</span>
+              </button>
+            </div>
+            <SettingsTab />
+          </div>
+        ) : currentTab === "style" ? (
+          /* STYLE & PRESETS FULL BROWSER VIEW */
+          <div className="flex flex-col gap-space-sm select-none">
+            <div className="flex flex-col bg-surface-container rounded-lg p-space-sm shadow-sm gap-space-sm">
+              <div className="flex items-center justify-between border-b border-outline-variant/30 pb-space-xs">
+                <div className="flex items-center gap-space-xs">
+                  <span className="material-symbols-outlined text-primary text-[18px]">auto_awesome_motion</span>
+                  <div>
+                    <h2 className="font-headline-sm text-headline-sm font-bold text-on-surface">
+                      Animation Presets Library
+                    </h2>
+                    <p className="font-label-xs text-label-xs text-on-surface-variant">
+                      50 Zero-Delay, Frame-Quantized After Effects Motion Styles
+                    </p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setCurrentTab("transcribe")}
+                  className="px-space-sm py-1 bg-surface-container-high hover:bg-surface-variant rounded text-on-surface font-label-xs text-label-xs flex items-center gap-1 transition-colors cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[14px]">visibility</span>
+                  <span>View in Canvas</span>
+                </button>
+              </div>
+
+              {/* Filter & Search Bar */}
+              <div className="flex flex-col gap-space-xs">
+                <div className="relative flex items-center bg-surface-container-lowest px-space-sm py-1 rounded-md border border-outline-variant/30">
+                  <span className="material-symbols-outlined text-on-surface-variant text-[15px] mr-1.5">search</span>
+                  <input
+                    type="text"
+                    value={librarySearch}
+                    onChange={(e) => setLibrarySearch(e.target.value)}
+                    placeholder="Search by name, number, or style (e.g. #51, Rotate, YouTube, AMV)..."
+                    className="bg-transparent text-on-surface text-body-sm font-body-sm w-full outline-none placeholder:text-on-surface-variant/60"
+                  />
+                  {librarySearch && (
+                    <button
+                      onClick={() => setLibrarySearch("")}
+                      className="text-on-surface-variant hover:text-on-surface text-[12px] cursor-pointer"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-space-xs overflow-x-auto no-scrollbar pt-0.5">
+                  {[
+                    "All",
+                    "TikTok / Reels / Shorts",
+                    "YouTube",
+                    "AMV / Edits",
+                    "Music Videos / Lyric Videos",
+                    "Storytelling & Movie",
+                  ].map((cat) => (
+                    <button
+                      key={cat}
+                      onClick={() => setLibraryFilter(cat)}
+                      className={`px-space-sm py-1 rounded font-label-xs text-label-xs whitespace-nowrap transition-all cursor-pointer ${
+                        libraryFilter === cat
+                          ? "bg-primary text-on-primary font-bold shadow-xs"
+                          : "bg-surface-container-high text-on-surface-variant hover:text-on-surface hover:bg-surface-variant"
+                      }`}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Preset Cards Grid */}
+              <div className="grid grid-cols-1 gap-space-sm pt-space-xs max-h-[65vh] overflow-y-auto pr-1">
+                {tabFilteredPresets.map((preset) => {
+                  const isSelected = selectedPresetId === preset.id;
+                  return (
+                    <div
+                      key={preset.id}
+                      onClick={() => applyPreset(preset)}
+                      className={`group relative flex flex-col p-space-sm rounded-lg cursor-pointer transition-all border ${
+                        isSelected
+                          ? "bg-surface-container-highest border-primary ring-1 ring-primary shadow-md"
+                          : "bg-surface-container-low hover:bg-surface-container-high border-outline-variant/20 shadow-xs"
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-space-sm">
+                        <div className="flex flex-col min-w-0 flex-1">
+                          <div className="flex items-center gap-space-xs flex-wrap">
+                            <span className="bg-surface-container font-mono text-[9px] text-on-surface-variant px-1 rounded">
+                              #{preset.num}
+                            </span>
+                            <span className="font-headline-xs text-headline-xs text-on-surface font-bold">
+                              {preset.name}
+                            </span>
+                            <span
+                              className={`font-label-xs text-[8px] font-bold px-1.5 py-0.5 rounded font-mono ${preset.accentBadge}`}
+                            >
+                              {preset.tag}
+                            </span>
+                          </div>
+                          <p className="font-body-sm text-body-sm text-on-surface-variant mt-0.5 text-[11px] leading-tight">
+                            {preset.whatItLooksLike} • {preset.description}
+                          </p>
+                        </div>
+
+                        <div className="shrink-0 flex items-center justify-end">
+                          <button
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              applyPreset(preset);
+                            }}
+                            className={`h-6 px-space-sm rounded font-label-xs text-label-xs font-semibold flex items-center gap-1 transition-all cursor-pointer ${
+                              isSelected
+                                ? "bg-primary text-on-primary shadow-xs"
+                                : "bg-surface-container-high hover:bg-primary hover:text-on-primary text-on-surface"
+                            }`}
+                          >
+                            <span className="material-symbols-outlined text-[13px]">
+                              {isSelected ? "check" : "play_arrow"}
+                            </span>
+                            <span>{isSelected ? "Active" : "Apply"}</span>
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Specs Row */}
+                      <div className="flex items-center gap-space-xs flex-wrap mt-2 pt-1 border-t border-outline-variant/20">
+                        <span className="bg-surface-container font-label-xs text-[9px] text-on-surface-variant px-1.5 py-0.5 rounded font-mono">
+                          {preset.wordsPerGroup}w/group
+                        </span>
+                        <span className="bg-surface-container font-label-xs text-[9px] text-on-surface-variant px-1.5 py-0.5 rounded font-mono">
+                          Bounce: {preset.bounceScale}%
+                        </span>
+                        <span className="bg-surface-container font-label-xs text-[9px] text-on-surface-variant px-1.5 py-0.5 rounded font-mono">
+                          Size: {preset.fontSize}px
+                        </span>
+                        <span className="flex items-center gap-1 bg-surface-container font-label-xs text-[9px] text-on-surface-variant px-1.5 py-0.5 rounded font-mono">
+                          <span
+                            className="w-2 h-2 rounded-full inline-block"
+                            style={{ backgroundColor: preset.highlightColor }}
+                          />
+                          {preset.highlightColor}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        ) : (
+          /* TRANSCRIBE & LIVE MOTION CANVAS VIEW */
+          <div className="flex flex-col w-full gap-space-sm select-none">
+            {/* AUDIO & EXTRACTION CARD */}
+            <section className="flex flex-col bg-surface-container rounded-lg p-space-sm shadow-sm gap-space-xs">
+              {/* Header status bar */}
+              <div className="flex items-center justify-between min-w-0">
+                <div className="flex items-center gap-space-xs min-w-0">
+                  <span className="material-symbols-outlined text-[14px] text-tertiary-container animate-pulse">
+                    bolt
+                  </span>
+                  <span className="font-label-xs text-label-xs text-on-surface-variant uppercase tracking-wider font-semibold">
+                    Groq Speech Engine
+                  </span>
+                </div>
+                <div className="flex items-center gap-space-xs shrink-0 bg-surface-container-lowest px-space-xs py-[2px] rounded">
+                  <span className="w-1.5 h-1.5 rounded-full bg-primary-container"></span>
+                  <span className="font-label-xs text-label-xs text-primary font-semibold">
+                    {model === "whisper-large-v3-turbo" ? "Turbo" : "Large v3"}
+                  </span>
+                </div>
+              </div>
+
+              {/* Interactive Waveform Visualizer Area */}
+              <div
+                className="relative w-full h-16 bg-surface-container-lowest rounded overflow-hidden flex flex-col justify-end p-space-xs group cursor-pointer"
+                id="waveform-track"
+                onClick={(e) => {
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const clickX = e.clientX - rect.left;
+                  const pct = Math.max(0, Math.min(100, (clickX / rect.width) * 100));
+                  setScrubberPos(Math.round(pct));
+                }}
+              >
+                {/* Glow Underlay */}
+                <div className="absolute inset-0 bg-gradient-to-r from-primary-container/10 via-secondary-container/20 to-transparent pointer-events-none"></div>
+
+                {/* Timecode display overlay */}
+                <div className="absolute top-1 left-1.5 z-10 flex items-center gap-space-xs pointer-events-none">
+                  <span className="font-label-xs text-label-xs text-primary bg-surface-dim/80 px-space-xs rounded font-mono">
+                    {timecodeDisplay.split("/")[0].trim()}
+                  </span>
+                  <span className="font-label-xs text-label-xs text-on-surface-variant font-mono">
+                    / {timecodeDisplay.split("/")[1]?.trim()}
+                  </span>
+                </div>
+
+                {/* Speech Onset Flags / Markers */}
+                <div className="absolute top-0 bottom-0 left-[12%] w-[1px] bg-tertiary-container/60 pointer-events-none">
+                  <span className="absolute top-0 -left-1 w-2 h-1.5 bg-tertiary-container rounded-b-xs"></span>
+                </div>
+                <div className="absolute top-0 bottom-0 left-[34%] w-[1px] bg-primary/70 pointer-events-none">
+                  <span className="absolute top-0 -left-1 w-2 h-1.5 bg-primary rounded-b-xs"></span>
+                </div>
+                <div className="absolute top-0 bottom-0 left-[58%] w-[1px] bg-primary/70 pointer-events-none">
+                  <span className="absolute top-0 -left-1 w-2 h-1.5 bg-primary rounded-b-xs"></span>
+                </div>
+                <div className="absolute top-0 bottom-0 left-[76%] w-[1px] bg-tertiary-container/60 pointer-events-none">
+                  <span className="absolute top-0 -left-1 w-2 h-1.5 bg-tertiary-container rounded-b-xs"></span>
+                </div>
+
+                {/* Generative Multi-Layer Audio Waveform */}
+                <div className="w-full h-10 flex items-end justify-between gap-[1px] px-0.5 z-0 opacity-90">
+                  {[
+                    18, 28, 64, 92, 80, 54, 22, 15, 72, 100, 85, 68, 30, 18, 48, 94, 76, 45, 20, 65, 88, 60, 25, 14, 70, 96, 75, 40, 22, 12,
+                  ].map((height, idx) => {
+                    const isHigh = height > 60;
+                    return (
+                      <span
+                        key={idx}
+                        className={`w-[2px] rounded-t-xs transition-all ${
+                          isHigh
+                            ? "bg-primary shadow-[0_0_6px_#c0c1ff]"
+                            : height > 35
+                            ? "bg-primary-container"
+                            : "bg-outline-variant"
+                        }`}
+                        style={{ height: `${height}%` }}
+                      />
+                    );
+                  })}
+                </div>
+
+                {/* Playhead & Scrubber Cursor */}
+                <div
+                  className="absolute inset-y-0 w-[2px] bg-secondary flex flex-col items-center pointer-events-none z-20 transition-all duration-75"
+                  style={{ left: `${scrubberPos}%` }}
+                >
+                  <div className="w-2.5 h-3 bg-secondary rounded-b-xs shadow-[0_0_8px_#d0bcff] flex items-center justify-center -mt-0.5">
+                    <div className="w-0.5 h-1.5 bg-on-secondary rounded-full"></div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Quick Settings: Model / Auto-Detect */}
+              <div className="grid grid-cols-2 gap-space-xs mt-space-xs">
+                <div className="relative flex items-center justify-between bg-surface-container-low px-space-sm py-[5px] rounded hover:bg-surface-container-high transition-colors">
+                  <div className="flex items-center gap-space-xs min-w-0">
+                    <span className="material-symbols-outlined text-[14px] text-tertiary-container">speed</span>
+                    <select
+                      value={model}
+                      onChange={(e) => setModel(e.target.value as GroqModel)}
+                      className="bg-transparent text-on-surface font-label-xs text-label-xs appearance-none outline-none cursor-pointer pr-4 truncate"
+                    >
+                      {MODEL_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value} className="bg-surface-container text-on-surface">
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="material-symbols-outlined text-[14px] text-on-surface-variant pointer-events-none">
+                    arrow_drop_down
+                  </span>
+                </div>
+
+                <div className="relative flex items-center justify-between bg-surface-container-low px-space-sm py-[5px] rounded hover:bg-surface-container-high transition-colors">
+                  <div className="flex items-center gap-space-xs min-w-0">
+                    <span className="material-symbols-outlined text-[14px] text-primary">translate</span>
+                    <select
+                      value={language}
+                      onChange={(e) => setLanguage(e.target.value)}
+                      className="bg-transparent text-on-surface font-label-xs text-label-xs appearance-none outline-none cursor-pointer pr-4 truncate"
+                    >
+                      <option value="Auto (EN)" className="bg-surface-container text-on-surface">
+                        Auto (EN)
+                      </option>
+                      {LANGUAGE_OPTIONS.map((opt) => (
+                        <option key={opt.value} value={opt.value} className="bg-surface-container text-on-surface">
+                          {opt.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <span className="font-label-xs text-label-xs text-on-surface-variant font-mono">US</span>
+                </div>
+              </div>
+
+              {/* Vocabulary / Glossary chips */}
+              <div className="flex items-center gap-space-xs flex-wrap py-0.5">
+                <span className="font-label-xs text-label-xs text-on-surface-variant uppercase tracking-wider shrink-0 mr-0.5 font-semibold">
+                  Glossary:
+                </span>
+                {glossary.map((tag) => (
+                  <span
+                    key={tag}
+                    className="bg-surface-container-highest text-primary font-label-xs text-label-xs px-space-xs py-[1px] rounded flex items-center gap-0.5"
+                  >
+                    {tag}
+                    <span
+                      onClick={() => removeGlossaryTag(tag)}
+                      className="material-symbols-outlined text-[10px] text-on-surface-variant cursor-pointer hover:text-on-surface"
+                    >
+                      close
+                    </span>
+                  </span>
+                ))}
+                {isAddingTag ? (
+                  <div className="flex items-center gap-1 bg-surface-container-low px-space-xs py-[1px] rounded">
+                    <input
+                      type="text"
+                      value={newGlossaryTag}
+                      onChange={(e) => setNewGlossaryTag(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleAddGlossaryTag()}
+                      placeholder="Tag..."
+                      className="bg-transparent text-on-surface text-[10px] w-12 outline-none font-mono"
+                      autoFocus
+                    />
+                    <button onClick={handleAddGlossaryTag} className="text-primary text-[10px]">
+                      ✓
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setIsAddingTag(true)}
+                    className="bg-surface-container-low hover:bg-surface-container-high text-on-surface-variant hover:text-on-surface font-label-xs text-label-xs px-space-xs py-[1px] rounded transition-colors flex items-center gap-0.5"
+                  >
+                    <span className="material-symbols-outlined text-[11px]">add</span>Add
+                  </button>
+                )}
+              </div>
+
+              {/* Transcribe Trigger & Telemetry Status */}
+              <div className="flex items-center justify-between gap-space-sm pt-space-xs bg-surface-container-lowest/50 p-space-xs rounded">
+                <div className="flex items-center gap-space-xs min-w-0">
+                  <span className="material-symbols-outlined text-[14px] text-primary">check_circle</span>
+                  <span className="font-label-xs text-label-xs text-on-surface-variant truncate">
+                    {transcribeStatus}
+                  </span>
+                </div>
+                <button
+                  onClick={isTranscribing ? handleCancelTranscribe : handleTranscribe}
+                  className="h-6 px-space-md bg-secondary-container hover:bg-secondary-container/90 text-on-secondary-container font-headline-xs text-headline-xs rounded flex items-center gap-space-xs transition-all shrink-0 active:scale-95 shadow-sm disabled:opacity-50"
+                >
+                  <span className={`material-symbols-outlined text-[13px] ${isTranscribing ? "animate-spin" : ""}`}>
+                    refresh
+                  </span>
+                  <span>{isTranscribing ? "Cancel" : hasTranscript ? "Re-Transcribe" : "Transcribe"}</span>
+                </button>
+              </div>
+            </section>
+
+            {/* LIVE PREVIEW CANVAS (CENTERPIECE) */}
+            <section className="flex flex-col bg-surface-container rounded-lg p-space-sm shadow-sm gap-space-xs">
+              {/* Viewport Header Toolbar */}
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-space-xs">
+                  <span className="material-symbols-outlined text-[14px] text-primary">videocam</span>
+                  <span className="font-headline-xs text-headline-xs text-on-surface font-semibold">Live Preview</span>
+                </div>
+                {/* Aspect Ratio Switcher */}
+                <div className="flex items-center bg-surface-container-lowest p-[2px] rounded gap-[2px]">
+                  {(["9:16", "16:9", "1:1"] as AspectRatio[]).map((ratio) => (
+                    <button
+                      key={ratio}
+                      onClick={() => setAspectRatio(ratio)}
+                      className={`px-space-xs py-[2px] rounded font-label-xs text-label-xs transition-colors ${
+                        aspectRatio === ratio
+                          ? "bg-surface-container-highest text-on-surface font-semibold shadow-xs"
+                          : "text-on-surface-variant hover:text-on-surface"
+                      }`}
+                    >
+                      {ratio}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Video Simulator Frame (TikTok/Reel Viewport) */}
+              <div
+                className={`relative w-full ${
+                  aspectRatio === "9:16"
+                    ? "aspect-[4/5]"
+                    : aspectRatio === "16:9"
+                    ? "aspect-[16/9]"
+                    : "aspect-square"
+                } bg-surface-container-lowest rounded-md overflow-hidden flex flex-col justify-between p-space-md shadow-inner group transition-all duration-300`}
+              >
+                {/* Background Placeholder */}
+                <div className="absolute inset-0 bg-gradient-to-b from-surface-container-high/60 via-surface-container-lowest to-surface-container-high/40 pointer-events-none" />
+
+                {/* Grid Overlay Guides */}
+                <div className="absolute inset-0 bg-[radial-gradient(#353535_1px,transparent_1px)] [background-size:16px_16px] opacity-30 pointer-events-none"></div>
+
+                {/* Creator UI Overlays */}
+                <div className="relative z-10 flex justify-between items-center w-full">
+                  <div className="flex items-center gap-space-xs bg-surface-dim/70 backdrop-blur-sm px-space-xs py-[2px] rounded">
+                    <span className={`w-1.5 h-1.5 rounded-full bg-error ${isPlaying ? "animate-ping" : ""}`}></span>
+                    <span className="font-label-xs text-label-xs text-on-surface font-mono">REC 60 FPS</span>
+                  </div>
+                  <div className="flex items-center gap-1 bg-surface-dim/70 backdrop-blur-sm px-space-xs py-[2px] rounded">
+                    <span className="material-symbols-outlined text-[12px] text-primary">aspect_ratio</span>
+                    <span className="font-label-xs text-label-xs text-on-surface font-mono">
+                      {aspectRatio === "9:16" ? "1080x1920" : aspectRatio === "16:9" ? "1920x1080" : "1080x1080"}
+                    </span>
+                  </div>
+                </div>
+
+                {/* CENTERSTAGE CAPTION: Word-by-Word Kinetic Display with Active Preset Styling */}
+                <div
+                  className="relative z-10 my-auto flex flex-col items-center justify-center text-center px-space-sm pointer-events-none transition-transform duration-200 w-full"
+                  style={{ transform: `translateY(${yOffset / 8}px)` }}
+                >
+                  {/* Preset Contextual Containers: Reddit, Tweet, Terminal, Search, Sticky Note, Newspaper, etc. */}
+                  {currentPreset.animMode === "reddit" && (
+                    <div className="mb-2 bg-[#1A1A1B] border border-outline-variant/40 px-3 py-1.5 rounded-md flex items-center gap-2 shadow-lg max-w-[90%] text-left">
+                      <div className="w-5 h-5 rounded-full bg-[#FF4500] flex items-center justify-center text-[10px] text-white font-black shrink-0">
+                        r/
+                      </div>
+                      <div className="flex flex-col min-w-0">
+                        <span className="text-[11px] font-bold text-white leading-none">r/AskReddit</span>
+                        <span className="text-[9px] text-on-surface-variant font-mono">Posted by u/creative_editor • 4h ago</span>
+                      </div>
+                    </div>
+                  )}
+
+                  {currentPreset.animMode === "tweet" && (
+                    <div className="mb-2 bg-black/85 border border-outline-variant/40 px-3 py-1.5 rounded-lg flex items-center justify-between gap-2 shadow-lg w-full max-w-[90%] text-left">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <div className="w-5 h-5 rounded-full bg-sky-500 flex items-center justify-center text-[10px] text-white font-bold shrink-0">
+                          𝕏
+                        </div>
+                        <div className="flex flex-col min-w-0">
+                          <div className="flex items-center gap-1">
+                            <span className="text-[11px] font-bold text-white truncate">Viral Motion</span>
+                            <span className="material-symbols-outlined text-sky-400 text-[13px]">verified</span>
+                          </div>
+                          <span className="text-[9px] text-on-surface-variant font-mono">@pro_captions</span>
+                        </div>
+                      </div>
+                      <span className="text-[9px] text-on-surface-variant font-mono shrink-0">Just now</span>
+                    </div>
+                  )}
+
+                  {currentPreset.animMode === "terminal" && (
+                    <div className="bg-black/90 border border-green-500/40 p-3 rounded-md shadow-2xl font-mono text-left w-full max-w-[90%] mb-2">
+                      <div className="text-[9px] text-green-400 mb-1.5 flex items-center justify-between opacity-80 border-b border-green-950 pb-1">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                          <span>bash • 80x24 (Ae Pro v1.0)</span>
+                        </div>
+                        <span className="text-green-600 font-mono">UTF-8</span>
+                      </div>
+                      <div className="text-green-400 font-mono flex items-center flex-wrap gap-1.5">
+                        <span className="text-green-500/70">guest@ae-studio:~$</span>
+                        <span className="text-white font-semibold">say --kinetic</span>
+                        <div
+                          key={`terminal-${activeWordIndex}`}
+                          className="font-bold underline text-green-300 bg-green-950/80 px-1.5 py-0.5 rounded live-anim-stat-card"
+                          style={{ fontSize: `${Math.round(fontSize * 0.28)}px` }}
+                        >
+                          "{activeWords[activeWordIndex]?.text || "CAPTIONS"}"
+                        </div>
+                        <span className="inline-block w-2 h-4 bg-green-400 ml-1 animate-pulse align-middle"></span>
+                      </div>
+                    </div>
+                  )}
+
+                  {currentPreset.animMode === "search-bar" && (
+                    <div className="flex items-center gap-2 bg-[#202124] border border-[#5F6368] px-3.5 py-1.5 rounded-full shadow-xl max-w-[90%] mb-2">
+                      <span className="material-symbols-outlined text-[15px] text-on-surface-variant">search</span>
+                      <div
+                        key={`search-${activeWordIndex}`}
+                        className="font-bold uppercase tracking-tight text-white live-anim-node live-anim-pop"
+                        style={{ fontSize: `${Math.round(fontSize * 0.28)}px` }}
+                      >
+                        {activeWords[activeWordIndex]?.text}
+                      </div>
+                      <span className="w-0.5 h-4 bg-primary animate-pulse ml-0.5"></span>
+                      <span className="material-symbols-outlined text-[15px] text-primary ml-auto">mic</span>
+                    </div>
+                  )}
+
+                  {currentPreset.animMode === "sticky-note" && (
+                    <div className="relative bg-yellow-300 text-yellow-950 p-4 rounded-sm shadow-2xl transform -rotate-1 max-w-[85%] border-b-2 border-yellow-500 text-center mb-2">
+                      <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 w-10 h-4 bg-amber-200/80 border border-amber-300/60 rounded-xs shadow-xs"></div>
+                      <div
+                        key={`sticky-${activeWordIndex}`}
+                        className="font-black uppercase tracking-tight block text-yellow-950 live-anim-node live-anim-pop"
+                        style={{ fontSize: `${Math.round(fontSize * 0.34)}px` }}
+                      >
+                        {activeWords[activeWordIndex]?.text}
+                      </div>
+                    </div>
+                  )}
+
+                  {currentPreset.animMode === "newspaper" && (
+                    <div className="bg-[#FAF6EE] text-neutral-900 border-2 border-neutral-800 p-3 rounded shadow-2xl max-w-[90%] text-center mb-2">
+                      <div className="text-[8px] font-serif uppercase tracking-widest text-neutral-600 border-b border-neutral-300 pb-0.5 mb-1.5">
+                        DAILY CHRONICLE • EXTRA EDITION
+                      </div>
+                      <div
+                        key={`newspaper-${activeWordIndex}`}
+                        className="font-serif font-black uppercase tracking-tight text-neutral-900 live-anim-node live-anim-newspaper"
+                        style={{ fontSize: `${Math.round(fontSize * 0.34)}px` }}
+                      >
+                        {activeWords[activeWordIndex]?.text}
+                      </div>
+                    </div>
+                  )}
+
+                  {currentPreset.animMode === "stat-card" && (
+                    <div className="bg-surface-container-high/90 border border-primary/30 backdrop-blur-md p-3 rounded-xl shadow-2xl max-w-[85%] flex items-center gap-3 mb-2">
+                      <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center text-primary font-black text-[18px]">
+                        ▲
+                      </div>
+                      <div className="flex flex-col text-left">
+                        <div
+                          key={`stat-${activeWordIndex}`}
+                          className="font-mono font-black text-primary live-anim-node live-anim-stat-card"
+                          style={{ fontSize: `${Math.round(fontSize * 0.36)}px` }}
+                        >
+                          {activeWords[activeWordIndex]?.text}
+                        </div>
+                        <span className="font-label-xs text-[9px] text-on-surface-variant font-mono">
+                          METRIC GROWTH • LIVE
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* MAIN CAPTION TEXT DISPLAY */}
+                  {wordsPerGroup === 1 || currentPreset.animMode === "single-word" ? (
+                    /* 1-WORD GIANT CENTER DISPLAY */
+                    <div className="relative flex flex-col items-center justify-center my-1">
+                      {currentPreset.animMode === "impact" && (
+                        <div className="absolute inset-0 -m-6 bg-yellow-400/20 rounded-full blur-xl animate-ping pointer-events-none"></div>
+                      )}
+                      {currentPreset.animMode === "repeater-wall" && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none opacity-20 -z-10 select-none">
+                          <span className="font-black text-[22px] tracking-widest text-white/50">{activeWords[activeWordIndex]?.text}</span>
+                          <span className="font-black text-[22px] tracking-widest text-white/50">{activeWords[activeWordIndex]?.text}</span>
+                        </div>
+                      )}
+
+                      <div
+                        style={{
+                          transform: `scale(${1 + bounceScale / 200})`,
+                          transition: "transform 150ms ease-out",
+                        }}
+                      >
+                        <span
+                          key={`single-${currentPreset.id}-${activeWordIndex}`}
+                          className={`font-black uppercase tracking-tight block live-anim-node ${
+                            currentPreset.animMode === "rotate"
+                              ? "live-anim-rotate"
+                              : currentPreset.animMode === "squash"
+                              ? "live-anim-squash"
+                              : currentPreset.animMode === "shadow-pop"
+                              ? "live-anim-shadow-pop"
+                              : currentPreset.animMode === "zoom-punch"
+                              ? "live-anim-zoom-punch"
+                              : currentPreset.animMode === "rainbow"
+                              ? "live-anim-rainbow"
+                              : currentPreset.animMode === "stroke-fill"
+                              ? "live-anim-stroke-fill"
+                              : currentPreset.animMode === "sticker"
+                              ? "live-anim-sticker"
+                              : currentPreset.animMode === "marker"
+                              ? "live-anim-marker"
+                              : currentPreset.animMode === "wave"
+                              ? "live-anim-wave"
+                              : currentPreset.animMode === "impact"
+                              ? "live-anim-impact"
+                              : currentPreset.animMode === "time-skip"
+                              ? "live-anim-time-skip"
+                              : currentPreset.animMode === "letter-scatter"
+                              ? "live-anim-scatter"
+                              : currentPreset.animMode === "lens-distort"
+                              ? "live-anim-lens-distort"
+                              : currentPreset.animMode === "datamosh"
+                              ? "live-anim-datamosh"
+                              : currentPreset.animMode === "graffiti"
+                              ? "live-anim-graffiti"
+                              : currentPreset.animMode === "word-rain"
+                              ? "live-anim-rain"
+                              : currentPreset.animMode === "invert-flash"
+                              ? "live-anim-invert-flash"
+                              : currentPreset.animMode === "circle-rotate"
+                              ? "live-anim-circle-rotate"
+                              : currentPreset.animMode === "echo"
+                              ? "live-anim-echo"
+                              : currentPreset.animMode === "hologram"
+                              ? "live-anim-hologram"
+                              : currentPreset.animMode === "crawl"
+                              ? "live-anim-crawl"
+                              : currentPreset.animMode === "thought"
+                              ? "live-anim-thought"
+                              : "live-anim-single-word"
+                          }`}
+                          style={{
+                            color:
+                              currentPreset.animMode === "marker"
+                                ? "#111111"
+                                : currentPreset.animMode === "split-color"
+                                ? "#00F0FF"
+                                : highlightColor,
+                            backgroundColor:
+                              currentPreset.animMode === "marker"
+                                ? "#FFE600"
+                                : currentPreset.animMode === "sticker"
+                                ? "#FFFFFF"
+                                : undefined,
+                            fontSize: `${Math.round(fontSize * 0.45)}px`,
+                            padding:
+                              currentPreset.animMode === "marker" || currentPreset.animMode === "sticker"
+                                ? "2px 10px"
+                                : undefined,
+                            borderRadius:
+                              currentPreset.animMode === "marker"
+                                ? "3px"
+                                : currentPreset.animMode === "sticker"
+                                ? "6px"
+                                : undefined,
+                            WebkitTextStroke: currentPreset.strokeWidth
+                              ? `${Math.max(1, Math.round(currentPreset.strokeWidth * 0.45))}px ${currentPreset.strokeColor}`
+                              : undefined,
+                            textShadow:
+                              currentPreset.animMode === "shadow-pop"
+                                ? `5px 5px 0px ${highlightColor}`
+                                : currentPreset.animMode === "hologram"
+                                ? `0 0 16px ${highlightColor}`
+                                : "0 4px 14px rgba(0,0,0,0.85)",
+                          }}
+                        >
+                          {activeWords[activeWordIndex]?.text || "POP"}
+                        </span>
+                      </div>
+
+                      {currentPreset.animMode === "underline" && (
+                        <div
+                          key={`underline-${activeWordIndex}`}
+                          className="w-full h-1.5 rounded-full mt-1.5 shadow-sm live-anim-node"
+                          style={{
+                            backgroundColor: highlightColor,
+                            boxShadow: `0 0 10px ${highlightColor}`,
+                            animation: "p-underline 0.45s ease-out forwards",
+                          }}
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    /* MULTI-WORD GROUP DISPLAY (2-word or 3-word chunks) */
+                    <div
+                      className={`relative flex flex-wrap items-center justify-center gap-x-2 gap-y-1 tracking-tight font-black leading-none drop-shadow-md ${
+                        currentPreset.animMode === "blur-box"
+                          ? "bg-black/60 backdrop-blur-md border border-white/20 px-3.5 py-2 rounded-xl shadow-2xl"
+                          : ""
+                      }`}
+                    >
+                      {currentPreset.animMode === "quote" && (
+                        <span className="text-secondary text-[28px] leading-none select-none font-serif mr-1">“</span>
+                      )}
+
+                      {/* Display current chunk of words based on wordsPerGroup */}
+                      {(() => {
+                        const chunkSize = wordsPerGroup;
+                        const chunkIdx = Math.floor(activeWordIndex / chunkSize);
+                        const start = chunkIdx * chunkSize;
+                        const visibleChunk = activeWords.slice(start, start + chunkSize);
+
+                        return visibleChunk.map((item, localIdx) => {
+                          const globalIdx = start + localIdx;
+                          const isActive = globalIdx === activeWordIndex;
+                          const isPast = globalIdx < activeWordIndex;
+
+                          if (isActive) {
+                            return (
+                              <div
+                                key={`active-group-wrap-${globalIdx}`}
+                                className="relative inline-flex flex-col items-center justify-center"
+                                style={{
+                                  transform: `scale(${1 + bounceScale / 220})`,
+                                  transition: "transform 150ms ease-out",
+                                }}
+                              >
+                                <span
+                                  key={`active-word-${currentPreset.id}-${globalIdx}`}
+                                  className={`px-1.5 py-0.5 rounded tracking-tight font-black uppercase live-anim-node ${
+                                    currentPreset.animMode === "rotate"
+                                      ? "live-anim-rotate"
+                                      : currentPreset.animMode === "squash"
+                                      ? "live-anim-squash"
+                                      : currentPreset.animMode === "shadow-pop"
+                                      ? "live-anim-shadow-pop"
+                                      : currentPreset.animMode === "wave"
+                                      ? "live-anim-wave"
+                                      : currentPreset.animMode === "zoom-punch"
+                                      ? "live-anim-zoom-punch"
+                                      : currentPreset.animMode === "rainbow"
+                                      ? "live-anim-rainbow"
+                                      : currentPreset.animMode === "stroke-fill"
+                                      ? "live-anim-stroke-fill"
+                                      : currentPreset.animMode === "sticker"
+                                      ? "live-anim-sticker"
+                                      : currentPreset.animMode === "marker"
+                                      ? "live-anim-marker"
+                                      : currentPreset.animMode === "outline-pulse" || currentPreset.animMode === "pulse"
+                                      ? "live-anim-pulse"
+                                      : currentPreset.animMode === "echo"
+                                      ? "live-anim-echo"
+                                      : currentPreset.animMode === "hologram"
+                                      ? "live-anim-hologram"
+                                      : currentPreset.animMode === "crawl"
+                                      ? "live-anim-crawl"
+                                      : currentPreset.animMode === "thought"
+                                      ? "live-anim-thought"
+                                      : currentPreset.animMode === "impact"
+                                      ? "live-anim-impact"
+                                      : currentPreset.animMode === "time-skip"
+                                      ? "live-anim-time-skip"
+                                      : currentPreset.animMode === "letter-scatter"
+                                      ? "live-anim-scatter"
+                                      : currentPreset.animMode === "lens-distort"
+                                      ? "live-anim-lens-distort"
+                                      : currentPreset.animMode === "datamosh"
+                                      ? "live-anim-datamosh"
+                                      : currentPreset.animMode === "graffiti"
+                                      ? "live-anim-graffiti"
+                                      : currentPreset.animMode === "word-rain"
+                                      ? "live-anim-rain"
+                                      : currentPreset.animMode === "invert-flash"
+                                      ? "live-anim-invert-flash"
+                                      : currentPreset.animMode === "circle-rotate"
+                                      ? "live-anim-circle-rotate"
+                                      : "live-anim-pop"
+                                  }`}
+                                  style={{
+                                    color:
+                                      currentPreset.animMode === "marker"
+                                        ? "#111111"
+                                        : currentPreset.animMode === "split-color"
+                                        ? "#00F0FF"
+                                        : highlightColor,
+                                    backgroundColor:
+                                      currentPreset.animMode === "marker"
+                                        ? "#FFE600"
+                                        : currentPreset.animMode === "sticker"
+                                        ? "#FFFFFF"
+                                        : undefined,
+                                    fontSize: `${Math.round(fontSize * 0.36)}px`,
+                                    WebkitTextStroke: currentPreset.strokeWidth
+                                      ? `${Math.max(1, Math.round(currentPreset.strokeWidth * 0.4))}px ${
+                                          currentPreset.strokeColor
+                                        }`
+                                      : undefined,
+                                    boxShadow:
+                                      currentPreset.animMode === "shadow-pop"
+                                        ? `4px 4px 0px ${highlightColor}`
+                                        : currentPreset.animMode === "hologram"
+                                        ? `0 0 16px ${highlightColor}`
+                                        : `0 0 16px ${highlightColor}80`,
+                                  }}
+                                >
+                                  {item.text}
+                                </span>
+
+                                {/* Underline swipe decoration */}
+                                {currentPreset.animMode === "underline" && (
+                                  <div
+                                    key={`underline-multi-${globalIdx}`}
+                                    className="w-full h-1 rounded-full mt-1 shadow-xs live-anim-node"
+                                    style={{
+                                      backgroundColor: highlightColor,
+                                      animation: "p-underline 0.4s ease-out forwards",
+                                    }}
+                                  />
+                                )}
+                              </div>
+                            );
+                          }
+
+                          return (
+                            <span
+                              key={`word-${globalIdx}`}
+                              className="tracking-tight font-extrabold uppercase transition-all duration-150 inline-block px-0.5"
+                              style={{
+                                color: baseColor,
+                                opacity: isPast ? 0.95 : 0.4,
+                                fontSize: `${Math.round(fontSize * 0.3)}px`,
+                                WebkitTextStroke: currentPreset.strokeWidth
+                                  ? `${Math.max(1, Math.round(currentPreset.strokeWidth * 0.3))}px ${
+                                      currentPreset.strokeColor
+                                    }`
+                                  : undefined,
+                              }}
+                            >
+                              {item.text}
+                            </span>
+                          );
+                        });
+                      })()}
+
+                      {currentPreset.animMode === "quote" && (
+                        <span className="text-secondary text-[28px] leading-none select-none font-serif ml-1">”</span>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Progress Bar Chapter indicator */}
+                  {currentPreset.animMode === "progress-bar" && (
+                    <div className="mt-3 w-48 h-1.5 bg-white/20 rounded-full overflow-hidden shadow-inner">
+                      <div
+                        className="h-full bg-red-600 transition-all duration-200"
+                        style={{ width: `${((activeWordIndex + 1) / activeWords.length) * 100}%` }}
+                      />
+                    </div>
+                  )}
+
+                  {/* Mirror floor reflection simulation */}
+                  {currentPreset.animMode === "mirror" && (
+                    <div className="opacity-25 transform scale-y-[-1] blur-[0.6px] pointer-events-none mt-1.5 select-none font-bold text-white text-[13px] tracking-wider">
+                      {activeWords[activeWordIndex]?.text}
+                    </div>
+                  )}
+
+                  {/* Subtitle Tracking Anchor Telemetry Indicator */}
+                  <div className="mt-space-md flex items-center gap-space-xs opacity-75">
+                    <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+                    <span className="font-label-xs text-label-xs text-on-surface-variant font-mono">
+                      #{currentPreset.num} {currentPreset.name} • {currentPreset.tag} • Y: {yOffset}px
+                    </span>
+                  </div>
+                </div>
+
+                {/* Frame Bottom Scrub & Playback Strip */}
+                <div className="relative z-10 flex items-center justify-between bg-surface-dim/85 backdrop-blur-md p-space-xs rounded">
+                  {/* Step Back / Play / Step Forward */}
+                  <div className="flex items-center gap-space-xs">
+                    <button
+                      onClick={() => setActiveWordIndex((prev) => (prev > 0 ? prev - 1 : activeWords.length - 1))}
+                      className="w-6 h-6 flex items-center justify-center rounded bg-surface-container-high text-on-surface hover:text-primary transition-colors cursor-pointer"
+                      title="Previous Word"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">skip_previous</span>
+                    </button>
+                    <button
+                      onClick={() => setIsPlaying(!isPlaying)}
+                      className="w-6 h-6 flex items-center justify-center rounded bg-primary text-on-primary hover:bg-primary-fixed transition-colors cursor-pointer shadow-sm"
+                      title={isPlaying ? "Pause" : "Play"}
+                    >
+                      <span className="material-symbols-outlined text-[16px]">
+                        {isPlaying ? "pause" : "play_arrow"}
+                      </span>
+                    </button>
+                    <button
+                      onClick={() => setActiveWordIndex((prev) => (prev + 1) % activeWords.length)}
+                      className="w-6 h-6 flex items-center justify-center rounded bg-surface-container-high text-on-surface hover:text-primary transition-colors cursor-pointer"
+                      title="Next Word"
+                    >
+                      <span className="material-symbols-outlined text-[16px]">skip_next</span>
+                    </button>
+
+                    {/* Speed Selector Pills */}
+                    <div className="flex items-center bg-surface-container-lowest p-[1px] rounded gap-[1px] ml-1">
+                      {[0.75, 1, 1.5].map((spd) => (
+                        <button
+                          key={spd}
+                          onClick={() => setPlaybackSpeed(spd)}
+                          className={`px-1 py-[1px] rounded text-[8.5px] font-mono transition-colors cursor-pointer ${
+                            playbackSpeed === spd
+                              ? "bg-primary text-on-primary font-bold"
+                              : "text-on-surface-variant hover:text-on-surface"
+                          }`}
+                        >
+                          {spd}x
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Frame Counter and Scale */}
+                  <div className="flex items-center gap-space-sm font-label-xs text-label-xs text-on-surface-variant">
+                    <div className="flex items-center gap-1 bg-surface-container-lowest px-space-xs py-[2px] rounded text-on-surface font-mono">
+                      <span className="text-primary font-bold">FRM</span>
+                      <span>
+                        {currentFrame} / {totalFrames}
+                      </span>
+                    </div>
+                    <span className="text-on-surface-variant">100% Fit</span>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* STYLE & PRESET QUICK-TRAY (Top 10 Presets Carousel) */}
+            <section className="flex flex-col bg-surface-container rounded-lg p-space-sm shadow-sm gap-space-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-space-xs">
+                  <span className="material-symbols-outlined text-[14px] text-secondary">auto_awesome_motion</span>
+                  <span className="font-headline-xs text-headline-xs text-on-surface font-semibold">
+                    Viral Animation Presets ({VIRAL_PRESETS.length})
+                  </span>
+                </div>
+                <button
+                  onClick={() => setIsLibraryOpen(true)}
+                  className="font-label-xs text-label-xs text-primary hover:underline flex items-center gap-0.5 cursor-pointer font-semibold"
+                >
+                  Browse Library ({VIRAL_PRESETS.length}){" "}
+                  <span className="material-symbols-outlined text-[12px]">open_in_new</span>
+                </button>
+              </div>
+
+              {/* Horizontal Scrollable Preset Cards Tray */}
+              <div className="flex items-center gap-space-sm overflow-x-auto pb-space-xs pt-1 no-scrollbar">
+                {VIRAL_PRESETS.map((preset) => {
+                  const isSelected = selectedPresetId === preset.id;
+                  return (
+                    <div
+                      key={preset.id}
+                      onClick={() => applyPreset(preset)}
+                      className={`shrink-0 w-32 p-space-xs rounded-lg flex flex-col gap-space-xs cursor-pointer shadow-md transition-all ${
+                        isSelected
+                          ? "bg-surface-container-highest ring-1 ring-primary bg-gradient-to-b from-primary/10 to-transparent"
+                          : "bg-surface-container-low hover:bg-surface-container-high"
+                      }`}
+                    >
+                      <div className="h-14 bg-surface-container-lowest rounded flex flex-col items-center justify-center relative overflow-hidden">
+                        <div
+                          className="absolute -top-3 -right-3 w-8 h-8 rounded-full blur-sm opacity-30"
+                          style={{ backgroundColor: preset.highlightColor }}
+                        />
+                        <span
+                          className="font-black text-[12px] px-space-xs py-0.5 rounded shadow scale-105 font-mono"
+                          style={{
+                            color: preset.highlightColor,
+                            backgroundColor: "#181818",
+                            WebkitTextStroke: preset.strokeWidth ? `0.5px ${preset.strokeColor}` : undefined,
+                          }}
+                        >
+                          {preset.tag.split(" ")[0]}
+                        </span>
+                        <span className="font-label-xs text-[8px] text-on-surface-variant mt-1 tracking-widest uppercase font-mono">
+                          {preset.wordsPerGroup}w/group
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between px-0.5">
+                        <span className="font-label-sm text-label-sm font-semibold text-on-surface truncate">
+                          {preset.name}
+                        </span>
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${
+                            isSelected ? "bg-primary" : "bg-outline-variant"
+                          }`}
+                        ></span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+
+            {/* KINETIC INSPECTOR (AE LAYER PROPS) */}
+            <section className="flex flex-col bg-surface-container rounded-lg p-space-sm shadow-sm gap-space-xs">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-space-xs">
+                  <span className="material-symbols-outlined text-[14px] text-primary">tune</span>
+                  <span className="font-headline-xs text-headline-xs text-on-surface font-semibold">
+                    Kinetic Inspector
+                  </span>
+                </div>
+                <span className="font-label-xs text-label-xs text-on-surface-variant uppercase tracking-wider font-mono">
+                  Ae Layer Props
+                </span>
+              </div>
+
+              {/* Parameter Scrubbers Table */}
+              <div className="flex flex-col gap-space-xs mt-0.5">
+                {/* Font Size Parameter */}
+                <div className="flex items-center justify-between bg-surface-container-lowest px-space-sm py-1 rounded">
+                  <div className="flex items-center gap-space-xs min-w-0">
+                    <span className="material-symbols-outlined text-[13px] text-on-surface-variant">format_size</span>
+                    <span className="font-body-sm text-body-sm text-on-surface">Font Size</span>
+                  </div>
+                  <div className="flex items-center gap-space-xs shrink-0">
+                    <input
+                      type="range"
+                      min="32"
+                      max="140"
+                      value={fontSize}
+                      onChange={(e) => setFontSize(Number(e.target.value))}
+                      className="w-20 h-1 bg-surface-variant rounded appearance-none cursor-pointer accent-primary"
+                    />
+                    <div className="w-12 h-5 bg-surface-container-high rounded flex items-center justify-end px-1.5 cursor-ew-resize hover:bg-surface-variant">
+                      <span className="font-label-sm text-label-sm text-primary font-mono">{fontSize}px</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Words Per Group Parameter */}
+                <div className="flex items-center justify-between bg-surface-container-lowest px-space-sm py-1 rounded">
+                  <div className="flex items-center gap-space-xs min-w-0">
+                    <span className="material-symbols-outlined text-[13px] text-on-surface-variant">short_text</span>
+                    <span className="font-body-sm text-body-sm text-on-surface">Words / Group</span>
+                  </div>
+                  <div className="flex items-center gap-space-xs shrink-0">
+                    <div className="flex items-center bg-surface-container-high rounded p-[2px] gap-[2px]">
+                      {([1, 2, 3] as const).map((num) => (
+                        <button
+                          key={num}
+                          onClick={() => setWordsPerGroup(num)}
+                          className={`w-5 h-4 flex items-center justify-center font-label-xs text-label-xs rounded transition-colors ${
+                            wordsPerGroup === num
+                              ? "bg-primary text-on-primary font-bold"
+                              : "text-on-surface-variant hover:text-on-surface"
+                          }`}
+                        >
+                          {num}
+                        </button>
+                      ))}
+                    </div>
+                    <div className="w-12 h-5 bg-surface-container-high rounded flex items-center justify-end px-1.5 cursor-ew-resize font-mono text-[10px]">
+                      <span className="font-label-sm text-label-sm text-on-surface font-mono">1–{wordsPerGroup}w</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Bounce Intensity Parameter */}
+                <div className="flex items-center justify-between bg-surface-container-lowest px-space-sm py-1 rounded">
+                  <div className="flex items-center gap-space-xs min-w-0">
+                    <span className="material-symbols-outlined text-[13px] text-on-surface-variant">4k</span>
+                    <span className="font-body-sm text-body-sm text-on-surface">Bounce Scale</span>
+                  </div>
+                  <div className="flex items-center gap-space-xs shrink-0">
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={bounceScale}
+                      onChange={(e) => setBounceScale(Number(e.target.value))}
+                      className="w-20 h-1 bg-surface-variant rounded appearance-none cursor-pointer accent-primary"
+                    />
+                    <div className="w-12 h-5 bg-surface-container-high rounded flex items-center justify-end px-1.5 cursor-ew-resize hover:bg-surface-variant">
+                      <span className="font-label-sm text-label-sm text-primary font-mono">{bounceScale}%</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Y-Offset Position Parameter */}
+                <div className="flex items-center justify-between bg-surface-container-lowest px-space-sm py-1 rounded">
+                  <div className="flex items-center gap-space-xs min-w-0">
+                    <span className="material-symbols-outlined text-[13px] text-on-surface-variant">
+                      vertical_align_bottom
+                    </span>
+                    <span className="font-body-sm text-body-sm text-on-surface">Y-Offset</span>
+                  </div>
+                  <div className="flex items-center gap-space-xs shrink-0">
+                    <input
+                      type="range"
+                      min="-300"
+                      max="300"
+                      value={yOffset}
+                      onChange={(e) => setYOffset(Number(e.target.value))}
+                      className="w-20 h-1 bg-surface-variant rounded appearance-none cursor-pointer accent-primary"
+                    />
+                    <div className="w-12 h-5 bg-surface-container-high rounded flex items-center justify-end px-1.5 cursor-ew-resize hover:bg-surface-variant">
+                      <span className="font-label-sm text-label-sm text-on-surface font-mono">{yOffset}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Dual Color Swatches */}
+              <div className="grid grid-cols-2 gap-space-xs mt-space-xs">
+                <div className="flex items-center justify-between bg-surface-container-lowest p-space-xs rounded cursor-pointer hover:bg-surface-container-low transition-colors">
+                  <div className="flex items-center gap-space-xs min-w-0">
+                    <span
+                      className="w-4 h-4 rounded-sm shadow-xs border border-outline-variant/30"
+                      style={{ backgroundColor: baseColor }}
+                    />
+                    <span className="font-label-xs text-label-xs text-on-surface truncate">Base Text</span>
+                  </div>
+                  <input
+                    type="color"
+                    value={baseColor}
+                    onChange={(e) => setBaseColor(e.target.value)}
+                    className="w-4 h-4 opacity-0 absolute cursor-pointer"
+                  />
+                  <span className="font-label-xs text-label-xs text-on-surface-variant font-mono">{baseColor}</span>
+                </div>
+
+                <div className="flex items-center justify-between bg-surface-container-lowest p-space-xs rounded cursor-pointer hover:bg-surface-container-low transition-colors">
+                  <div className="flex items-center gap-space-xs min-w-0">
+                    <span
+                      className="w-4 h-4 rounded-sm shadow-xs border border-outline-variant/30"
+                      style={{ backgroundColor: highlightColor }}
+                    />
+                    <span className="font-label-xs text-label-xs text-on-surface truncate">Highlight</span>
+                  </div>
+                  <input
+                    type="color"
+                    value={highlightColor}
+                    onChange={(e) => setHighlightColor(e.target.value)}
+                    className="w-4 h-4 opacity-0 absolute cursor-pointer"
+                  />
+                  <span className="font-label-xs text-label-xs text-secondary font-mono font-semibold">
+                    {highlightColor}
+                  </span>
+                </div>
+              </div>
+
+              {/* Pro Sync Automation Toggles */}
+              <div className="flex flex-col gap-space-xs pt-space-xs">
+                <label className="flex items-center justify-between bg-surface-container-lowest px-space-sm py-1.5 rounded cursor-pointer group">
+                  <div className="flex items-center gap-space-xs min-w-0">
+                    <span className="material-symbols-outlined text-[13px] text-primary">auto_fix_high</span>
+                    <span className="font-body-sm text-body-sm text-on-surface group-hover:text-primary transition-colors">
+                      Auto-Snap to Audio Onsets
+                    </span>
+                  </div>
+                  <div className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={autoSnapOnsets}
+                      onChange={(e) => setAutoSnapOnsets(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-7 h-4 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-on-primary after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-primary"></div>
+                  </div>
+                </label>
+
+                <label className="flex items-center justify-between bg-surface-container-lowest px-space-sm py-1.5 rounded cursor-pointer group">
+                  <div className="flex items-center gap-space-xs min-w-0">
+                    <span className="material-symbols-outlined text-[13px] text-tertiary-container">content_cut</span>
+                    <span className="font-body-sm text-body-sm text-on-surface group-hover:text-tertiary-container transition-colors">
+                      Split on Pauses (&gt;300ms)
+                    </span>
+                  </div>
+                  <div className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={splitOnPauses}
+                      onChange={(e) => setSplitOnPauses(e.target.checked)}
+                      className="sr-only peer"
+                    />
+                    <div className="w-7 h-4 bg-surface-variant peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-on-primary after:rounded-full after:h-3 after:w-3 after:transition-all peer-checked:bg-primary"></div>
+                  </div>
+                </label>
+              </div>
+            </section>
+          </div>
+        )}
+      </main>
+
+      {/* FIXED BOTTOM ACTION BAR */}
+      <footer className="fixed bottom-0 w-full z-40 pb-safe bg-surface-container/95 backdrop-blur-xl shadow-[0_-2px_12px_rgba(0,0,0,0.5)] border-t border-outline-variant/30">
+        <div className="h-16 px-margin flex items-center justify-between gap-space-sm">
+          <div className="flex flex-col justify-center min-w-0">
+            <div className="flex items-center gap-space-xs">
+              <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
+              <span className="font-label-sm text-label-sm text-on-surface font-medium truncate">
+                Ready to Sync • {currentPreset.name}
+              </span>
+            </div>
+            <span className="font-label-xs text-label-xs text-on-surface-variant truncate">
+              {hasTranscript ? `${activeWords.length} words` : "No transcript yet"} • {wordsPerGroup}w/group
+            </span>
+          </div>
+          <button
+            onClick={handleBuildInAe}
+            disabled={isBuilding || isTranscribing || !hasTranscript}
+            className="h-10 min-w-[140px] px-space-lg rounded bg-primary text-on-primary flex items-center justify-center gap-space-xs font-headline-xs text-headline-xs font-semibold hover:bg-primary-fixed transition-all shrink-0 active:scale-95 disabled:opacity-50 shadow-md cursor-pointer"
+          >
+            <span className={`material-symbols-outlined text-[18px] ${isBuilding ? "animate-spin" : ""}`}>
+              {isBuilding ? "autorenew" : "bolt"}
+            </span>
+            <span>{isBuilding ? "Building..." : "Build in AE"}</span>
+          </button>
+        </div>
+      </footer>
+
+      {/* PRESET LIBRARY MODAL (FULL BROWSE LIBRARY) */}
+      <PresetLibraryModal
+        isOpen={isLibraryOpen}
+        onClose={() => setIsLibraryOpen(false)}
+        activePresetId={selectedPresetId}
+        onSelectPreset={(preset) => {
+          applyPreset(preset);
+          setIsLibraryOpen(false);
+        }}
+      />
     </div>
   );
 };
+
+export const App = () => (
+  <ToastProvider>
+    <AppContent />
+  </ToastProvider>
+);
+export default App;

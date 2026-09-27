@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing release tag to attach the ZXP to (e.g. v1.0.0)'
+        description: 'Release tag to build for, e.g. v1.1.0 (created from this commit if it does not exist)'
         required: true
 
 jobs:
@@ -53,7 +53,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.TAG }}
+          # Only used when the tag doesn't exist yet (manual run for a new version).
+          target_commitish: ${{ github.sha }}
           name: Pro Caption AE ${{ env.TAG }}
-          body_path: ${{ github.event_name == 'push' && '.github/release-notes.md' || '' }}
+          body_path: .github/release-notes.md
+          prerelease: false
+          make_latest: true
           files: out/*.zxp
           fail_on_unmatched_files: true

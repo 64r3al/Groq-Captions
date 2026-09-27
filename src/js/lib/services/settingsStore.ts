@@ -87,17 +87,34 @@ const decrypt = (blob: EncryptedBlob): string => {
 };
 
 export const getStoredApiKey = (): string | null => {
-  const settings = readSettings();
-  if (!settings.apiKey) return null;
+  if (typeof window !== "undefined" && typeof window.cep === "undefined") {
+    try {
+      return localStorage.getItem("groq_captions_api_key") || null;
+    } catch {
+      return null;
+    }
+  }
   try {
+    const settings = readSettings();
+    if (!settings.apiKey) return null;
     return decrypt(settings.apiKey);
   } catch {
-    // Key file and settings file got out of sync (e.g. settings copied to another machine).
+    // Key file and settings file got out of sync or Node unavailable.
     return null;
   }
 };
 
 export const setStoredApiKey = (apiKey: string): void => {
+  if (typeof window !== "undefined" && typeof window.cep === "undefined") {
+    try {
+      if (apiKey) {
+        localStorage.setItem("groq_captions_api_key", apiKey);
+      } else {
+        localStorage.removeItem("groq_captions_api_key");
+      }
+    } catch {}
+    return;
+  }
   const settings = readSettings();
   if (apiKey) {
     settings.apiKey = encrypt(apiKey);
@@ -108,10 +125,31 @@ export const setStoredApiKey = (apiKey: string): void => {
 };
 
 export const getStoredFfmpegPath = (): string | null => {
-  return readSettings().ffmpegPath || null;
+  if (typeof window !== "undefined" && typeof window.cep === "undefined") {
+    try {
+      return localStorage.getItem("groq_captions_ffmpeg_path") || null;
+    } catch {
+      return null;
+    }
+  }
+  try {
+    return readSettings().ffmpegPath || null;
+  } catch {
+    return null;
+  }
 };
 
 export const setStoredFfmpegPath = (ffmpegPath: string | null): void => {
+  if (typeof window !== "undefined" && typeof window.cep === "undefined") {
+    try {
+      if (ffmpegPath) {
+        localStorage.setItem("groq_captions_ffmpeg_path", ffmpegPath);
+      } else {
+        localStorage.removeItem("groq_captions_ffmpeg_path");
+      }
+    } catch {}
+    return;
+  }
   const settings = readSettings();
   if (ffmpegPath) {
     settings.ffmpegPath = ffmpegPath;

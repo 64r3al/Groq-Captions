@@ -1,7 +1,16 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { initBolt } from "../lib/utils/bolt";
+import "@fontsource/geist/400.css";
+import "@fontsource/geist/500.css";
+import "@fontsource/geist/600.css";
+import "@fontsource/geist/700.css";
+import "@fontsource/jetbrains-mono/400.css";
+import "@fontsource/jetbrains-mono/500.css";
+import "@fontsource/jetbrains-mono/600.css";
+import "material-symbols/outlined.css";
 import "../index.scss";
+import "./tailwind.css";
 import { App } from "./App";
 import { installMockHost } from "./dev/mockHost";
 import { UIGallery } from "./dev/UIGallery";

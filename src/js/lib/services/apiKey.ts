@@ -9,24 +9,28 @@ import type { ApiKeyStatus } from "../../../shared/types";
  * have the file, so this silently returns null there (which is exactly the BYOK behavior we
  * want for a release build). */
 const readEnvLocalKey = (): string | null => {
-  const file = path.join(getExtensionRoot(), ".env.local");
-  if (!fs.existsSync(file)) return null;
-  const contents = fs.readFileSync(file, { encoding: "utf-8" });
-  for (const line of contents.split(/\r?\n/)) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const eq = trimmed.indexOf("=");
-    if (eq === -1) continue;
-    const key = trimmed.slice(0, eq).trim();
-    if (key !== "GROQ_API_KEY") continue;
-    let value = trimmed.slice(eq + 1).trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
+  try {
+    const file = path.join(getExtensionRoot(), ".env.local");
+    if (!fs.existsSync(file)) return null;
+    const contents = fs.readFileSync(file, { encoding: "utf-8" });
+    for (const line of contents.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq === -1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      if (key !== "GROQ_API_KEY") continue;
+      let value = trimmed.slice(eq + 1).trim();
+      if (
+        (value.startsWith('"') && value.endsWith('"')) ||
+        (value.startsWith("'") && value.endsWith("'"))
+      ) {
+        value = value.slice(1, -1);
+      }
+      return value || null;
     }
-    return value || null;
+  } catch {
+    return null;
   }
   return null;
 };
@@ -34,7 +38,6 @@ const readEnvLocalKey = (): string | null => {
 const last4 = (key: string): string => key.slice(-4);
 
 export const resolveApiKey = (): { key: string | null; status: ApiKeyStatus } => {
-  assertNodeAvailable();
   const stored = getStoredApiKey();
   if (stored) {
     return { key: stored, status: { source: "settings", last4: last4(stored) } };
@@ -62,7 +65,30 @@ export interface TestApiKeyResult {
 
 /** GET /models with the given key: 200 = valid, 401 = invalid/revoked, anything else surfaces
  * the status code so the user isn't left guessing. */
-export const testApiKey = (apiKey: string): Promise<TestApiKeyResult> => {
+export const testApiKey = async (apiKey: string): Promise<TestApiKeyResult> => {
+  if (typeof window !== "undefined" && typeof window.cep === "undefined") {
+    try {
+      const res = await fetch(GROQ_MODELS_URL, {
+        method: "GET",
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const status = res.status;
+      if (res.ok) {
+        return { ok: true, status, message: "Key is valid." };
+      } else if (status === 401) {
+        return { ok: false, status, message: "Invalid or revoked API key." };
+      } else {
+        return {
+          ok: false,
+          status,
+          message: `Groq responded with status ${status}.`,
+        };
+      }
+    } catch (err: any) {
+      return { ok: false, status: 0, message: err?.message || String(err) };
+    }
+  }
+
   assertNodeAvailable();
   return new Promise((resolve) => {
     const url = new URL(GROQ_MODELS_URL);

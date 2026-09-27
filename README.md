@@ -1,75 +1,63 @@
 # Pro Caption AE
 
-> AI-powered, viral-ready captions for Adobe After Effects.
+> AI transcription and animated, word-synced captions for Adobe After Effects.
 
-A professional CEP extension that transforms spoken audio into frame-accurate, animated captions with 65+ viral animation presets using Groq's Whisper API.
+Pro Caption AE is an After Effects panel that transcribes the audio in your comp with Groq's
+Whisper API and builds frame-accurate, animated caption layers from it, styled with one of 50
+presets built for short-form video.
 
-## What it does
-
-- 🎙️ Transcribes audio directly from an After Effects composition with Groq Whisper
-- ⚡ Zero-delay, frame-quantized caption timing for perfect sync
-- 🎯 Intelligent word-timing refinement against source audio with RMS-based onset detection
-- 🎬 Auto-builds animated caption layers inside After Effects with expression-based animation
-- 🔤 65+ viral animation presets optimized for TikTok, YouTube, AMV, Music Videos & Storytelling
-- 🌈 Live preview canvas with real-time style and animation feedback
-- 🧩 Automatic audio chunking for long content, glossary support for proper noun spelling
-- 🛠️ Complete development, testing, and ZXP packaging workflows
-
-## Installation
+## Install
 
 1. Download the latest `.zxp` from [Releases](https://github.com/64r3al/Pro-Caption-AE/releases/latest).
 2. Install it with the free [ZXP/UXP Installer](https://aescripts.com/learn/zxp-installer/), then restart After Effects.
-3. Open **Window → Extensions → Pro Caption AE** and add your Groq API key in Settings.
+3. Open **Window → Extensions → Pro Caption AE** and add your [Groq API key](https://console.groq.com/keys) in Settings.
 
-Requires After Effects 2024+ and FFmpeg. See [INSTALLATION.md](./INSTALLATION.md) for details.
+Requires After Effects 2024 (v24) or newer and FFmpeg. See [INSTALLATION.md](./INSTALLATION.md) for details.
+
+## How to use
+
+1. In your comp, select the audio (or video) layer you want captioned.
+2. **Transcribe** tab: pick the model and language, optionally add glossary words (names, brands,
+   jargon) so they're spelled right, then click **Transcribe**.
+3. **Style & Animation** tab: pick a preset and adjust size, words per group, bounce, colors and
+   vertical position. The live preview updates as you go.
+4. Click **Build in AE**. The captions are added as text layers in a `Captions - <comp name>`
+   precomp, in a single undo step.
+
+## Features
+
+- **Groq Whisper transcription** (Large v3 or Large v3 Turbo) with word-level timestamps.
+- **Long audio** is split into overlapping chunks automatically and stitched back together.
+- **Onset refinement** nudges each word onto the actual start of the sound in your audio.
+- **Frame-quantized timing** that respects the layer's start time, trim, and time stretch.
+- **50 animation presets** for TikTok/Reels, YouTube, AMV, music and storytelling edits, plus
+  word highlight, pop, reveal and drop shadow.
+- **Editable output:** normal After Effects text layers driven by expressions.
+- **Bring your own key:** your Groq key is stored encrypted in your user profile, never in the project.
 
 ## Stack
 
-TypeScript · React · CEP · ExtendScript · Groq Whisper API · FFmpeg · Vite · After Effects
-
-## Architecture
-
-~~~text
-Audio
-  ↓
-FFmpeg extraction
-  ↓
-Groq / Whisper transcription
-  ↓
-Word timestamps
-  ↓
-Onset refinement
-  ↓
-Frame quantization
-  ↓
-Caption grouping
-  ↓
-After Effects layers
-~~~
-
-## Project status
-
-The core transcription → synchronization → caption-building pipeline is implemented, and the
-panel UI has been redesigned around a premium, native-feeling component system (`src/js/main/ui/`).
-
-Current work is focused on expanding editing controls, presets, exports and the overall authoring experience.
+TypeScript · React · Tailwind CSS · CEP · ExtendScript · Groq Whisper API · FFmpeg · Vite
 
 ## Development
 
-~~~bash
+```bash
 npm install
-npm run dev
-npm run test
-npm run build
-npm run zxp
-~~~
+npm run dev        # panel UI in a plain browser at http://localhost:3000/main/index.html
+npm test
+npm run typecheck
+npm run build      # dist/cep, symlinked into your CEP extensions folder for live testing
+```
 
-`npm run dev` also serves the panel UI on its own in a plain browser (no After Effects
-needed): a dev-only mock host answers layer-selection and build calls with sample data, and
-appending `?gallery=1` to the URL opens a gallery of every UI component for visual QA.
-Neither is present in a packaged build.
+`npm run dev` runs without After Effects: a dev-only mock host answers layer-selection and build
+calls with sample data, and adding `?gallery=1` to the URL opens a gallery of the UI components.
+Neither is included in a packaged build.
 
-See the repository documentation for the complete setup, CEP configuration and testing workflow.
+### Releasing
+
+Push a `v*` tag, or run the **Release ZXP** workflow from the Actions tab with a tag name. It
+builds and signs the ZXP on a Windows runner and attaches it to that GitHub release. See
+[docs/ARCHITECTURE.md](./docs/ARCHITECTURE.md) for how the pieces fit together.
 
 ## Built by IVX
 

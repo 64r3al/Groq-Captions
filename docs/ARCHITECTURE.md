@@ -40,11 +40,11 @@ src/jsx/                    Host code — runs inside After Effects as ExtendScr
 
 src/js/                     Panel code — runs in CEP's Chromium/Node context
   main/
-    App.tsx                    Tab shell (Transcribe / Edit / Style / Export / Settings)
-    components/                One component per tab
-      TranscribeTab.tsx           Selection, model/language, Generate Transcript (+chunking)
-      CaptionBuilder.tsx           Sync/grouping/style controls, Build/Rebuild Captions (Phase 2)
-      SettingsTab.tsx               API key + ffmpeg
+    App.tsx                    Single-screen studio: Transcribe / Style & Animation / Settings,
+                                  live preview, Transcribe + Build in AE actions
+    tailwind.css               Tailwind entry (theme in /tailwind.config.js, compiled at build)
+    features/PresetLibraryModal.tsx   Full preset browser
+    components/SettingsTab.tsx       API key + ffmpeg
   lib/
     services/                  Node-side business logic (this project's, not bolt-cep's)
       env.ts                     Node-availability guard, settings-dir resolution
@@ -53,6 +53,8 @@ src/js/                     Panel code — runs in CEP's Chromium/Node context
       ffmpeg.ts                  Locate ffmpeg, extract trimmed audio in the background
       onset.ts                    ffmpeg PCM decode -> src/shared/onset.ts's RMS detection
       groq.ts                    Groq Whisper API client (manual multipart, 429 backoff)
+      pipeline.ts                Selection -> transcript (extract, chunk, transcribe, stitch,
+                                   cancel, temp cleanup) + onset refinement before a build
       theme.ts                   Match the host app's current color theme
     cep/, utils/                bolt-cep's CEP glue (CSInterface, evalTS, node.ts, theming)
 
@@ -65,6 +67,7 @@ src/shared/                 Pure logic + types shared between panel and host, no
   captions.ts                    caption grouping, line wrapping, reveal timing
   onset.ts                       RMS envelope + nearest-onset detection math
   chunking.ts                    long-audio chunk planning + overlap-aware stitching
+  presets.ts                     the 50 animation presets shown in the panel
 
 docs/ARCHITECTURE.md        This file
 ```
@@ -77,7 +80,7 @@ docs/ARCHITECTURE.md        This file
                                       sourceInSeconds, sourceDurationSeconds, ... }
              │  evalTS (JSON over evalScript)
              ▼
- CEP panel — Transcribe tab (src/js/main/components/TranscribeTab.tsx)
+ CEP panel — Transcribe (App.tsx#handleTranscribe → lib/services/pipeline.ts#transcribeSelection)
    1. resolveApiKey()                    settings.json (encrypted) → .env.local → none
    2. findFfmpeg() + extractAudio()       child_process, background, → temp .flac
       (or planChunks()+multiple extractAudio() calls if longer than CHUNK_MAX_SECONDS)
@@ -85,7 +88,7 @@ docs/ARCHITECTURE.md        This file
    4. normalizeWords() / stitchTranscriptChunks()   verbose_json → flat TranscriptWord[]
              │  raw words, source-relative seconds
              ▼
- CEP panel — Captions section (src/js/main/components/CaptionBuilder.tsx)
+ CEP panel — Build in AE (App.tsx#handleBuildInAe, pipeline.ts#refineWordTiming)
    5. refineOnsets()         ffmpeg PCM decode + RMS envelope → onset-snapped starts
    6. syncWords()             source time → comp time → frame-quantized (shared/sync.ts)
    7. buildGroups()           words → captions with on-screen start/end + wrapped text
@@ -273,8 +276,8 @@ interface StoredSettings {
    fallback uses a synchronous `execSync` (blocks the panel's own render thread briefly, not
    After Effects itself); `groq.ts` reads the whole audio file synchronously and re-reads it
    on every 429 retry; `SettingsTab.tsx`'s handlers have no try/catch, so a settings-file
-   write failure fails silently; switching tabs mid-generation unmounts `TranscribeTab`
-   without cancelling in-flight work, which keeps running invisibly. None of these are
+   write failure fails silently. (Switching tabs mid-transcription no longer loses work: the
+   job lives in `App.tsx`, and closing the panel cancels it and removes its temp audio.) None of these are
    correctness bugs in the sync/caption-building logic Phase 2 added; they're pre-existing
    Phase 1 robustness gaps, left as-is per the audit's scope (fix what the README's own test
    checklist promises, report the rest).
@@ -288,7 +291,7 @@ interface StoredSettings {
   (`shared/captions.ts`), and comp/text-layer generation with per-word Expression-Selector
   animators (`jsx/aeft/aeft.ts#buildCaptions`) — all ported from `Groq_Captions.jsx`'s
   proven `mapToComp`/`applySync`/`buildGroups`/animator code, now unit tested (56 tests,
-  `npm run test`) and wired end-to-end in the panel (`CaptionBuilder.tsx`). Also closed the
+  `npm run test`) and wired end-to-end in the panel (now `App.tsx` via `lib/services/pipeline.ts`). Also closed the
   Phase 1 "no chunking" gap: audio over `CHUNK_MAX_SECONDS` is split, transcribed per chunk,
   and stitched (`shared/chunking.ts`). Not yet a `captions.json`-driven single-text-layer
   approach — each caption is still its own layer, precomposed; that performance-oriented
