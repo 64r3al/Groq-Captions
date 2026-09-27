@@ -106,6 +106,10 @@ export interface CaptionStyle {
   animMode?: string;
   rotationDeg?: number;
   trackingAmount?: number;
+  /** Extra overshoot for the pop animation, in percent (0 = none). */
+  bounceScale?: number;
+  /** Vertical nudge in px, relative to a 1920px-tall frame. */
+  yOffset?: number;
 }
 
 export interface BuildCaptionsResult {

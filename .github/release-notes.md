@@ -1,6 +1,10 @@
 ## Pro Caption AE
 
-AI transcription and animated captions for Adobe After Effects, powered by Groq Whisper.
+AI transcription and animated, word-synced captions for Adobe After Effects, powered by Groq Whisper.
+
+- Transcribe the selected audio layer with word-level timestamps (long clips are chunked automatically)
+- 50 animation presets with a live preview
+- Builds editable, frame-accurate text layers in a precomp, in one undo step
 
 ### Install
 1. Download `Pro-Caption-AE_<version>.zxp` below.

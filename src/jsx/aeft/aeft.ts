@@ -116,13 +116,42 @@ const exprHideUntilSpoken = (times: number[]): string =>
   "var t=[" + fmtArr(times) + "];\nvar i=textIndex-1;\n(i<t.length && time<t[i]-0.0001) ? 100 : 0;";
 
 const exprPop = (times: number[], durationSeconds: number): string =>
-  "var t=[" + fmtArr(times) + "];\nvar d=" + durationSeconds + ";\nvar i=textIndex-1;\n" +
-  "var p=(i<t.length)?(time-t[i])/d:1;\np<0 ? 100 : (p>=1 ? 0 : 100*(1-p)*(1-p));";
+  "var t=[" + fmtArr(times) + "];\n" +
+  "var d=" + durationSeconds.toFixed(4) + ";\n" +
+  "var i=textIndex-1;\n" +
+  "if (i >= t.length) { 0; } else {\n" +
+  "  var el = time - t[i];\n" +
+  "  if (el < 0 || el >= d) { 0; } else {\n" +
+  "    var p = el / d;\n" +
+  "    100 * Math.sin(p * Math.PI) * (1 + 0.3 * (1 - p));\n" +
+  "  }\n" +
+  "};";
 
-const exprActiveWord = (times: number[], endTime: number): string =>
-  "var t=[" + fmtArr(times) + "];\nvar e=" + endTime.toFixed(4) + ";\nvar i=textIndex-1;\n" +
-  "var a=(i<t.length)?t[i]:1e9;\nvar b=(i+1<t.length)?t[i+1]:e;\n" +
-  "(time>=a-0.0001 && time<b-0.0001) ? 100 : 0;";
+const exprActiveWord = (starts: number[], ends: number[]): string =>
+  "var s=[" + fmtArr(starts) + "];\n" +
+  "var e=[" + fmtArr(ends) + "];\n" +
+  "var i=textIndex-1;\n" +
+  "if (i >= s.length) { 0; } else {\n" +
+  "  var a = s[i];\n" +
+  "  var b = (i < e.length) ? e[i] : a + 0.3;\n" +
+  "  (time >= a - 0.0001 && time < b) ? 100 : 0;\n" +
+  "};";
+
+const exprRotate = (times: number[], durationSeconds: number): string =>
+  "var t=[" + fmtArr(times) + "];\n" +
+  "var d=" + durationSeconds.toFixed(4) + ";\n" +
+  "var i=textIndex-1;\n" +
+  "if (i >= t.length) { 0; } else {\n" +
+  "  var el = time - t[i];\n" +
+  "  if (el < 0 || el >= d) { 0; } else {\n" +
+  "    var p = el / d;\n" +
+  "    100 * (1 - p) * (1 - p);\n" +
+  "  }\n" +
+  "};";
+
+const exprWave = (): string =>
+  "var w = Math.sin(time * 10 + textIndex * 1.2);\n" +
+  "50 + 50 * w;";
 
 const textAnimatorsOf = (lyr: any): any => p(p(lyr, "ADBE Text Properties"), "ADBE Text Animators");
 
@@ -258,12 +287,19 @@ const createCaptionLayer = (
   const transform = lyr.property("ADBE Transform Group");
   p(transform, "ADBE Anchor Point").expression =
     "var r=sourceRectAtTime(outPoint-thisComp.frameDuration,false);\n[r.left+r.width/2, r.top+r.height/2];";
+  // yOffset is authored against a 1920px-tall frame; scale it to this comp's height.
+  const yOffset = style.yOffset != null ? (style.yOffset * comp.height) / 1920 : 0;
   p(transform, "ADBE Position").setValue([
     comp.width / 2,
-    comp.height * POSITION_Y_FRACTIONS[style.posIndex],
+    comp.height * POSITION_Y_FRACTIONS[style.posIndex] + yOffset,
   ]);
 
   const times = revealTimesFor(group, style.leadInFrames, comp.frameRate);
+  const endTimes: number[] = [];
+  for (let i = 0; i < group.words.length; i++) {
+    const nextStart = i + 1 < group.words.length ? group.words[i + 1].start : group.end;
+    endTimes.push(Math.min(group.end, Math.max(group.words[i].end, nextStart)));
+  }
 
   if (style.highlight) {
     const hc = intToRgb(style.highlightColor);
@@ -272,11 +308,53 @@ const createCaptionLayer = (
       "Active Word",
       "ADBE Text Fill Color",
       [[hc[0], hc[1], hc[2], 1], hc],
-      exprActiveWord(times, group.end)
+      exprActiveWord(times, endTimes)
     );
   }
   if (style.pop) {
-    addWordAnimator(lyr, "Pop In", "ADBE Text Scale 3D", [[70, 70, 100], [70, 70]], exprPop(times, 0.12));
+    // The selector swings 0 -> ~100 -> 0 right after each reveal, so the word overshoots to
+    // (100 + bounce)% and settles back at 100%.
+    const peak = 100 + (style.bounceScale != null ? style.bounceScale : 30);
+    addWordAnimator(
+      lyr,
+      "Pop In",
+      "ADBE Text Scale 3D",
+      [[peak, peak, 100], [peak, peak]],
+      exprPop(times, 0.18)
+    );
+  }
+  if (style.animMode === "rotate") {
+    try {
+      addWordAnimator(
+        lyr,
+        "Rotate In",
+        "ADBE Text Rotation",
+        [-15],
+        exprRotate(times, 0.22)
+      );
+    } catch (eRot) {}
+  }
+  if (style.animMode === "squash") {
+    try {
+      addWordAnimator(
+        lyr,
+        "Squash & Stretch",
+        "ADBE Text Scale 3D",
+        [[130, 70, 100], [130, 70]],
+        exprPop(times, 0.2)
+      );
+    } catch (eSq) {}
+  }
+  if (style.animMode === "wave") {
+    try {
+      addWordAnimator(
+        lyr,
+        "Wave Ripple",
+        "ADBE Text Position 3D",
+        [[0, -18, 0], [0, -18]],
+        exprWave()
+      );
+    } catch (eWv) {}
   }
   if (style.reveal) {
     addWordAnimator(lyr, "Reveal (synced)", "ADBE Text Opacity", [0], exprHideUntilSpoken(times));

@@ -3,7 +3,9 @@ node_modules
 dist
 dist-ssr
 *.local
-.env.local
+.env
+.env.*
+!.env.local.example
 yarn-error.log
 .media
 *.tsbuildinfo

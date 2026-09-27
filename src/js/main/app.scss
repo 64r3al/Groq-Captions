@@ -108,8 +108,8 @@
 }
 
 // ==========================================================================================
-// Generic content layout helpers (used inside sections across TranscribeTab/CaptionBuilder/
-// SettingsTab - the small vocabulary every field-heavy panel needs).
+// Generic content layout helpers (used by SettingsTab and the dev UI gallery - the small
+// vocabulary every field-heavy panel needs).
 // ==========================================================================================
 .gc-pane {
   display: flex;
