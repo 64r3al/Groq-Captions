@@ -48,7 +48,8 @@ const config: CEP_Config = {
   zxp: {
     country: "US",
     province: "CA",
-    org: "Pro Caption AE",
+    // No spaces: vite-cep-plugin passes this to ZXPSignCmd unquoted.
+    org: "ProCaptionAE",
     // Placeholder only - vite.config.ts overwrites this with ZXP_PASSWORD before signing.
     // Never a real secret, so it's fine for this literal object to be bundled anywhere.
     password: "",

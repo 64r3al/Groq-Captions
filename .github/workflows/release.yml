@@ -1,42 +1,59 @@
-name: Create Release
+name: Release ZXP
 
 on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing release tag to attach the ZXP to (e.g. v1.0.0)'
+        required: true
 
 jobs:
-  create-release:
-    runs-on: ubuntu-latest
+  build-zxp:
+    # Adobe's ZXPSignCmd (bundled by vite-cep-plugin) only ships for Windows and macOS.
+    runs-on: windows-latest
     permissions:
       contents: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      TAG: ${{ github.event_name == 'push' && github.ref_name || inputs.tag }}
     steps:
       - uses: actions/checkout@v4
-      
-      - name: Create Release
-        uses: actions/create-release@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/setup-node@v4
         with:
-          tag_name: ${{ github.ref }}
-          release_name: Pro Caption AE ${{ github.ref_name }}
-          body: |
-            ## Pro Caption AE Release ${{ github.ref_name }}
-            
-            ### Features
-            - AI-powered transcription with Groq Whisper API
-            - Frame-accurate, animated captions for Adobe After Effects
-            - 65+ viral animation presets optimized for TikTok, YouTube, AMV, Music Videos & Storytelling
-            - Intelligent word-timing refinement against source audio
-            - Live preview canvas with real-time style feedback
-            - Complete caption building pipeline with expression-based animation
-            
-            ### Installation
-            1. Download the `.zxp` file from the releases page
-            2. Install using Adobe Extension Manager or drag-and-drop into After Effects
-            3. Add your Groq API key in Settings
-            
-            ### What's New
-            See the commits in this release for technical details.
-          draft: false
-          prerelease: false
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm test
+
+      # A fresh self-signed certificate is generated on every build, so its password is a
+      # throwaway value rather than a stored secret.
+      - name: Build signed ZXP
+        run: |
+          export ZXP_PASSWORD="$(openssl rand -hex 24)"
+          npm run zxp
+
+      - name: Verify signature and rename
+        run: |
+          src="$(ls dist/zxp/*.zxp | head -n 1)"
+          node_modules/vite-cep-plugin/lib/bin/ZXPSignCmd.exe -verify "$src"
+          version="$(node -p "require('./package.json').version")"
+          mkdir -p out
+          cp "$src" "out/Pro-Caption-AE_${version}.zxp"
+          ls -l out
+
+      - name: Attach to release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: Pro Caption AE ${{ env.TAG }}
+          body_path: ${{ github.event_name == 'push' && '.github/release-notes.md' || '' }}
+          files: out/*.zxp
+          fail_on_unmatched_files: true
