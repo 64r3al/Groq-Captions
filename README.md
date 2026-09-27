@@ -15,6 +15,16 @@ A professional CEP extension that transforms spoken audio into frame-accurate, a
 - 🧩 Automatic audio chunking for long content, glossary support for proper noun spelling
 - 🛠️ Complete development, testing, and ZXP packaging workflows
 
+## Installation
+
+Get started in 3 steps:
+
+1. **Download** the latest `.zxp` installer from [GitHub Releases](https://github.com/64r3al/Pro-Caption-AE/releases)
+2. **Install** by dragging the `.zxp` into After Effects (or use Extension Manager)
+3. **Configure** your Groq API key in Settings
+
+👉 **[Full Installation Guide →](./INSTALLATION.md)**
+
 ## Stack
 
 TypeScript · React · CEP · ExtendScript · Groq Whisper API · FFmpeg · Vite · After Effects
