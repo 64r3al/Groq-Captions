@@ -80,6 +80,13 @@ export interface CaptionGroupData {
 /** 0-3, matching src/shared/constants.ts's POSITION_OPTIONS (Bottom/Lower third/Center/Top). */
 export type CaptionPositionIndex = 0 | 1 | 2 | 3;
 
+export type PresetCategory =
+  | "TikTok / Reels / Shorts"
+  | "YouTube"
+  | "AMV / Edits"
+  | "Music Videos / Lyric Videos"
+  | "Storytelling & Movie";
+
 /** Style + animation toggles for buildCaptions. Colors are 0xRRGGBB ints (never negative,
  * always JSON-safe) rather than AE's native [0-1,0-1,0-1] float triples, so the panel's color
  * pickers (which work in hex) don't need a round-trip conversion just to cross the bridge. */
@@ -95,9 +102,10 @@ export interface CaptionStyle {
   highlight: boolean;
   pop: boolean;
   shadow: boolean;
-  /** Show each word this many frames before its own start (see shared/captions.ts#revealTimes,
-   * which the host recomputes itself from each group's already comp-time word starts). */
   leadInFrames: number;
+  animMode?: string;
+  rotationDeg?: number;
+  trackingAmount?: number;
 }
 
 export interface BuildCaptionsResult {
