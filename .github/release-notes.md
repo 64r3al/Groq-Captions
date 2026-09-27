@@ -3,7 +3,8 @@
 AI transcription and animated, word-synced captions for Adobe After Effects, powered by Groq Whisper.
 
 - Transcribe the selected audio layer with word-level timestamps (long clips are chunked automatically)
-- 50 animation presets with a live preview
+- 66 presets and 15 real After Effects motion types, with a live preview
+- Use any font installed on your machine
 - Builds editable, frame-accurate text layers in a precomp, in one undo step
 
 ### Install

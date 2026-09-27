@@ -33,7 +33,7 @@ vite.config.ts              Panel build (React, → dist/cep/js)
 vite.es.config.ts           ExtendScript build (TS → ES3, → dist/cep/jsx/index.js)
 
 src/jsx/                    Host code — runs inside After Effects as ExtendScript (ES3)
-  aeft/aeft.ts                 evalTS-callable functions: layer info, ffmpeg picker,
+  aeft/aeft.ts                 evalTS-callable functions: layer info, ffmpeg picker, listFonts,
                                   buildCaptions() (comp/text-layer generation, Phase 2)
   lib/json2.js                 JSON polyfill (ES3 has no native JSON)
   index.ts                     Picks the right per-app module and exports the Scripts type
@@ -44,6 +44,7 @@ src/js/                     Panel code — runs in CEP's Chromium/Node context
                                   live preview, Transcribe + Build in AE actions
     tailwind.css               Tailwind entry (theme in /tailwind.config.js, compiled at build)
     features/PresetLibraryModal.tsx   Full preset browser
+    features/FontPicker.tsx          Searchable installed-font picker
     components/SettingsTab.tsx       API key + ffmpeg
   lib/
     services/                  Node-side business logic (this project's, not bolt-cep's)
@@ -55,6 +56,7 @@ src/js/                     Panel code — runs in CEP's Chromium/Node context
       groq.ts                    Groq Whisper API client (manual multipart, 429 backoff)
       pipeline.ts                Selection -> transcript (extract, chunk, transcribe, stitch,
                                    cancel, temp cleanup) + onset refinement before a build
+      fonts.ts                   Installed-font list (via aeft listFonts) + cached choice
       theme.ts                   Match the host app's current color theme
     cep/, utils/                bolt-cep's CEP glue (CSInterface, evalTS, node.ts, theming)
 
@@ -67,7 +69,9 @@ src/shared/                 Pure logic + types shared between panel and host, no
   captions.ts                    caption grouping, line wrapping, reveal timing
   onset.ts                       RMS envelope + nearest-onset detection math
   chunking.ts                    long-audio chunk planning + overlap-aware stitching
-  presets.ts                     the 50 animation presets shown in the panel
+  presets.ts                     the 66 presets shown in the panel (classic + Kinetic Motion)
+  motion.ts                      motion types + each preset animMode's After Effects motion
+  fonts.ts                       PostScript name -> CSS preview font, font search/sort
 
 docs/ARCHITECTURE.md        This file
 ```

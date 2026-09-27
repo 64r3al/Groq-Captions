@@ -3,7 +3,7 @@
 /** @type {import('tailwindcss').Config} */
 export default {
   darkMode: "class",
-  content: { relative: true, files: ["./src/js/**/*.{ts,tsx,html}"] },
+  content: { relative: true, files: ["./src/js/**/*.{ts,tsx,html}", "./src/shared/**/*.ts"] },
   theme: {
     extend: {
       colors: {
