@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useElementWidth, useInView } from "../ui/hooks";
-import { intToHex } from "../ui/color";
+import { useElementWidth, useInView, intToHex } from "../ui";
 import { POSITION_Y_FRACTIONS } from "../../../shared/constants";
 import type { CaptionStyle } from "../../../shared/types";
 

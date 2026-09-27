@@ -16,4 +16,5 @@ export * from "./InlineError";
 export * from "./Card";
 export * from "./SectionHeader";
 export * from "./Badge";
+export * from "./color";
 export * from "./hooks";
