@@ -1,0 +1,42 @@
+name: Create Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref }}
+          release_name: Pro Caption AE ${{ github.ref_name }}
+          body: |
+            ## Pro Caption AE Release ${{ github.ref_name }}
+            
+            ### Features
+            - AI-powered transcription with Groq Whisper API
+            - Frame-accurate, animated captions for Adobe After Effects
+            - 65+ viral animation presets optimized for TikTok, YouTube, AMV, Music Videos & Storytelling
+            - Intelligent word-timing refinement against source audio
+            - Live preview canvas with real-time style feedback
+            - Complete caption building pipeline with expression-based animation
+            
+            ### Installation
+            1. Download the `.zxp` file from the releases page
+            2. Install using Adobe Extension Manager or drag-and-drop into After Effects
+            3. Add your Groq API key in Settings
+            
+            ### What's New
+            See the commits in this release for technical details.
+          draft: false
+          prerelease: false
