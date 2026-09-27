@@ -12,8 +12,8 @@ import { version } from "./package.json";
 
 const config: CEP_Config = {
   version,
-  id: "com.groqcaptions.panel",
-  displayName: "Groq Captions",
+  id: "com.procaptionae.panel",
+  displayName: "Pro Caption AE",
   symlink: "local",
   port: 3000,
   servePort: 5000,
@@ -35,7 +35,7 @@ const config: CEP_Config = {
     {
       mainPath: "./main/index.html",
       name: "main",
-      panelDisplayName: "Groq Captions",
+      panelDisplayName: "Pro Caption AE",
       autoVisible: true,
       width: 420,
       height: 620,
@@ -48,7 +48,7 @@ const config: CEP_Config = {
   zxp: {
     country: "US",
     province: "CA",
-    org: "Groq Captions",
+    org: "Pro Caption AE",
     // Placeholder only - vite.config.ts overwrites this with ZXP_PASSWORD before signing.
     // Never a real secret, so it's fine for this literal object to be bundled anywhere.
     password: "",

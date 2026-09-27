@@ -1,22 +1,23 @@
-# Groq Captions
+# Pro Caption AE
 
-> AI-powered word-synced captions for Adobe After Effects.
+> AI-powered, viral-ready captions for Adobe After Effects.
 
-A CEP extension that turns spoken audio into frame-accurate, animated captions using Groq's Whisper API.
+A professional CEP extension that transforms spoken audio into frame-accurate, animated captions with 65+ viral animation presets using Groq's Whisper API.
 
 ## What it does
 
-- 🎙️ Transcribes audio directly from an After Effects composition
-- ⚡ Uses Groq / Whisper for fast transcription
-- 🎯 Refines word timing against the source audio
-- 🎬 Builds animated caption layers inside After Effects
-- 🔤 Supports word-by-word and highlight-based animation
-- 🧩 Handles long audio with automatic chunking
-- 🛠️ Includes development and ZXP packaging workflows
+- 🎙️ Transcribes audio directly from an After Effects composition with Groq Whisper
+- ⚡ Zero-delay, frame-quantized caption timing for perfect sync
+- 🎯 Intelligent word-timing refinement against source audio with RMS-based onset detection
+- 🎬 Auto-builds animated caption layers inside After Effects with expression-based animation
+- 🔤 65+ viral animation presets optimized for TikTok, YouTube, AMV, Music Videos & Storytelling
+- 🌈 Live preview canvas with real-time style and animation feedback
+- 🧩 Automatic audio chunking for long content, glossary support for proper noun spelling
+- 🛠️ Complete development, testing, and ZXP packaging workflows
 
 ## Stack
 
-TypeScript · React · CEP · ExtendScript · Groq API · FFmpeg · Vite · After Effects
+TypeScript · React · CEP · ExtendScript · Groq Whisper API · FFmpeg · Vite · After Effects
 
 ## Architecture
 

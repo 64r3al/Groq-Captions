@@ -92,7 +92,7 @@ export const UIGallery = () => {
     <ToastProvider>
       <div className="gc-gallery">
         <header className="gc-gallery-header">
-          <h1>Groq Captions — UI Gallery</h1>
+          <h1>Pro Caption AE — UI Gallery</h1>
           <div className="gc-gallery-row">
             <StatusPill label="Layer selected" tone="success" />
             <StatusPill label="No API key" tone="warning" />
