@@ -19,7 +19,7 @@ export const App = () => {
   return (
     <div className="gc-app">
       <header className="gc-app-header">
-        <span className="gc-app-wordmark">Groq Captions</span>
+        <span className="gc-app-wordmark">Pro Caption AE</span>
         <Button
           variant="ghost"
           size="sm"
