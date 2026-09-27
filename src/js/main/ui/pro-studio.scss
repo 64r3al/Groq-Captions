@@ -457,3 +457,106 @@ html, body {
 }
 
 
+
+// ------------------------------------------------------------------------------------------
+// Motion previews: one per shared/motion.ts MotionType, mirroring the AE animators in
+// src/jsx/aeft/aeft.ts#addMotionAnimator (same direction, rough timing, cubic ease-out).
+// ------------------------------------------------------------------------------------------
+@keyframes m-slide-up { from { transform: translateY(0.9em); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes m-drop-in { from { transform: translateY(-1.2em); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes m-slide-left { from { transform: translateX(1.4em); opacity: 0; } to { transform: none; opacity: 1; } }
+@keyframes m-zoom-in { from { transform: scale(0); } to { transform: none; } }
+@keyframes m-zoom-out { from { transform: scale(2.5); opacity: 0.4; } to { transform: none; opacity: 1; } }
+@keyframes m-blur-in { from { filter: blur(10px); opacity: 0.3; } to { filter: none; opacity: 1; } }
+@keyframes m-tracking { from { letter-spacing: 0.6em; opacity: 0.4; } to { letter-spacing: normal; opacity: 1; } }
+@keyframes m-skew { from { transform: skewX(-30deg); } to { transform: none; } }
+@keyframes m-rotate { from { transform: rotate(-15deg); } to { transform: none; } }
+@keyframes m-spin { from { transform: rotate(-360deg); } to { transform: none; } }
+@keyframes m-squash {
+  0% { transform: scale(1, 1); }
+  40% { transform: scale(1.3, 0.7); }
+  100% { transform: scale(1, 1); }
+}
+@keyframes m-wave { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-0.25em); } }
+@keyframes m-shake {
+  0%, 100% { transform: translateX(0); }
+  15% { transform: translateX(-6px); }
+  30% { transform: translateX(6px); }
+  45% { transform: translateX(-4px); }
+  60% { transform: translateX(4px); }
+  75% { transform: translateX(-2px); }
+}
+@keyframes m-fade { from { opacity: 0; } to { opacity: 1; } }
+
+$motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+.live-motion-none { display: inline-block !important; }
+.live-motion-slide-up { display: inline-block !important; animation: m-slide-up 0.28s $motion-ease both; }
+.live-motion-drop-in { display: inline-block !important; animation: m-drop-in 0.3s $motion-ease both; }
+.live-motion-slide-left { display: inline-block !important; animation: m-slide-left 0.3s $motion-ease both; }
+.live-motion-zoom-in { display: inline-block !important; animation: m-zoom-in 0.22s $motion-ease both; }
+.live-motion-zoom-out { display: inline-block !important; animation: m-zoom-out 0.2s $motion-ease both; }
+.live-motion-blur-in { display: inline-block !important; animation: m-blur-in 0.3s $motion-ease both; }
+.live-motion-tracking { display: inline-block !important; animation: m-tracking 0.35s $motion-ease both; }
+.live-motion-skew { display: inline-block !important; animation: m-skew 0.25s $motion-ease both; }
+.live-motion-rotate { display: inline-block !important; animation: m-rotate 0.22s $motion-ease both; }
+.live-motion-spin { display: inline-block !important; animation: m-spin 0.4s $motion-ease both; }
+.live-motion-squash { display: inline-block !important; animation: m-squash 0.2s ease-out both; }
+.live-motion-wave { display: inline-block !important; animation: m-wave 0.6s ease-in-out infinite; }
+.live-motion-shake { display: inline-block !important; animation: m-shake 0.4s linear both; }
+.live-motion-fade { display: inline-block !important; animation: m-fade 0.3s ease-out both; }
+
+// Live preview renders caption text in the font After Effects will use (see App.tsx
+// previewFont). Icons and the telemetry line keep their own fonts.
+.pca-font-scope :not(.material-symbols-outlined):not(.pca-font-ignore):not(.pca-font-ignore *) {
+  font-family: var(--pca-font-family) !important;
+  font-weight: var(--pca-font-weight) !important;
+  font-style: var(--pca-font-style) !important;
+}
+
+// ------------------------------------------------------------------------------------------
+// Hit areas: every control in the panel is at least 28px in both directions, however compact
+// its visual styling. Sliders keep a thin visual track but get a 20px-tall grab area.
+// ------------------------------------------------------------------------------------------
+#app {
+  button,
+  select,
+  [role="button"],
+  input[type="text"],
+  input[type="search"],
+  input[type="password"] {
+    min-height: 28px;
+  }
+
+  button,
+  [role="button"] {
+    min-width: 28px;
+  }
+
+  select {
+    padding-top: 0;
+    padding-bottom: 0;
+  }
+
+  input[type="range"] {
+    -webkit-appearance: none;
+    height: 20px;
+    padding: 8px 0;
+    background-clip: content-box;
+    cursor: pointer;
+  }
+
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--color-primary);
+    border: 2px solid var(--color-surface);
+    margin-top: -5px;
+    cursor: grab;
+  }
+
+  input[type="range"]::-webkit-slider-runnable-track {
+    height: 4px;
+  }
+}

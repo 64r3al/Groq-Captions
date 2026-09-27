@@ -27,6 +27,7 @@ export const PresetLibraryModal = ({
     "AMV / Edits",
     "Music Videos / Lyric Videos",
     "Storytelling & Movie",
+    "Kinetic Motion",
   ];
 
   const filteredPresets = VIRAL_PRESETS.filter((p) => {
@@ -98,7 +99,7 @@ export const PresetLibraryModal = ({
           </div>
 
           {/* Category Chips */}
-          <div className="flex items-center gap-space-xs overflow-x-auto no-scrollbar pt-1">
+          <div className="flex flex-wrap items-center gap-space-xs pt-1">
             {categories.map((cat) => {
               const count =
                 cat === "All"

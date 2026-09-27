@@ -13,6 +13,12 @@
   box-sizing: border-box;
 }
 
+// The root stays at 16px so Tailwind's rem-based sizes (w-8, h-6, spacing) render at their
+// intended pixel sizes; readable 12px body text is set on body instead.
+html {
+  font-size: 16px;
+}
+
 html,
 body {
   margin: 0;
@@ -20,6 +26,9 @@ body {
   background: var(--gc-surface-0);
   color: var(--gc-text-primary);
   font-family: var(--gc-font-family);
+}
+
+body {
   font-size: var(--gc-font-size);
   line-height: var(--gc-line-height);
   -webkit-font-smoothing: antialiased;

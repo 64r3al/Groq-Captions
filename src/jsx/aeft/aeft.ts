@@ -2,6 +2,7 @@ import type {
   BuildCaptionsResult,
   CaptionGroupData,
   CaptionStyle,
+  FontInfo,
   SelectedAudioLayerInfo,
 } from "../../shared/types";
 
@@ -79,6 +80,28 @@ export const pickFfmpegExecutable = (): string | null => {
   return f ? f.fsName : null;
 };
 
+/** Every font installed on this machine, via the Fonts object model added in After Effects
+ * 24.0. Returns [] on older versions so the panel can fall back to a built-in list. */
+export const listFonts = (): FontInfo[] => {
+  const fontsApi = (app as any).fonts;
+  if (!fontsApi || !fontsApi.allFonts) return [];
+  const out: FontInfo[] = [];
+  const groups = fontsApi.allFonts;
+  for (let i = 0; i < groups.length; i++) {
+    const group = groups[i];
+    for (let j = 0; j < group.length; j++) {
+      const f = group[j];
+      try {
+        if (f.isSubstitute) continue;
+        out.push({ postScriptName: f.postScriptName, family: f.familyName, style: f.styleName });
+      } catch (e) {
+        // one unreadable font shouldn't hide the rest
+      }
+    }
+  }
+  return out;
+};
+
 // ---------------------------------------------------------------------------------------
 // Phase 2: comp/caption building.
 //
@@ -152,6 +175,58 @@ const exprRotate = (times: number[], durationSeconds: number): string =>
 const exprWave = (): string =>
   "var w = Math.sin(time * 10 + textIndex * 1.2);\n" +
   "50 + 50 * w;";
+
+/** Entry motion: full offset (100) until the word's reveal time, then eases out to rest (0)
+ * over durationSeconds. Before its time the word is usually hidden by the reveal animator. */
+const exprEaseIn = (times: number[], durationSeconds: number): string =>
+  "var t=[" + fmtArr(times) + "];\n" +
+  "var d=" + durationSeconds.toFixed(4) + ";\n" +
+  "var i=textIndex-1;\n" +
+  "if (i >= t.length) { 0; } else {\n" +
+  "  var el = time - t[i];\n" +
+  "  if (el < 0) { 100; } else if (el >= d) { 0; } else {\n" +
+  "    var q = 1 - el / d;\n" +
+  "    100 * q * q * q;\n" +
+  "  }\n" +
+  "};";
+
+/** Decaying oscillation at the start of each word, for the shake motion. */
+const exprShake = (times: number[]): string =>
+  "var t=[" + fmtArr(times) + "];\n" +
+  "var i=textIndex-1;\n" +
+  "if (i >= t.length) { 0; } else {\n" +
+  "  var el = time - t[i];\n" +
+  "  (el < 0 || el > 0.4) ? 0 : 100 * Math.sin(el * 70) * (1 - el / 0.4);\n" +
+  "};";
+
+/** Adds the animator for one motion. Kept separate from pop/highlight/reveal so every motion
+ * combines with those toggles. Unknown motions are ignored rather than failing the build. */
+const addMotionAnimator = (lyr: any, motion: string, times: number[], size: number): void => {
+  const s = size / 100;
+  const move = (name: string, x: number, y: number, d: number) =>
+    addWordAnimator(lyr, name, "ADBE Text Position 3D", [[x, y, 0], [x, y]], exprEaseIn(times, d));
+  const scale = (name: string, v: number, d: number) =>
+    addWordAnimator(lyr, name, "ADBE Text Scale 3D", [[v, v, 100], [v, v]], exprEaseIn(times, d));
+
+  if (motion === "slide-up") move("Slide Up", 0, 70 * s, 0.28);
+  else if (motion === "drop-in") move("Drop In", 0, -90 * s, 0.3);
+  else if (motion === "slide-left") move("Slide In", 110 * s, 0, 0.3);
+  else if (motion === "zoom-in") scale("Grow In", 0, 0.22);
+  else if (motion === "zoom-out") scale("Slam", 250, 0.2);
+  else if (motion === "blur-in") addWordAnimator(lyr, "Blur Focus", "ADBE Text Blur", [[40, 40]], exprEaseIn(times, 0.3));
+  else if (motion === "tracking")
+    addWordAnimator(lyr, "Letter Spread", "ADBE Text Tracking Amount", [80], exprEaseIn(times, 0.35));
+  else if (motion === "skew") addWordAnimator(lyr, "Skew Swipe", "ADBE Text Skew", [30], exprEaseIn(times, 0.25));
+  else if (motion === "rotate") addWordAnimator(lyr, "Rotate In", "ADBE Text Rotation", [-15], exprRotate(times, 0.22));
+  else if (motion === "spin") addWordAnimator(lyr, "Spin In", "ADBE Text Rotation", [-360], exprEaseIn(times, 0.4));
+  else if (motion === "squash")
+    addWordAnimator(lyr, "Squash & Stretch", "ADBE Text Scale 3D", [[130, 70, 100], [130, 70]], exprPop(times, 0.2));
+  else if (motion === "wave")
+    addWordAnimator(lyr, "Wave Ripple", "ADBE Text Position 3D", [[0, -18 * s, 0], [0, -18 * s]], exprWave());
+  else if (motion === "shake")
+    addWordAnimator(lyr, "Shake", "ADBE Text Position 3D", [[10 * s, 0, 0], [10 * s, 0]], exprShake(times));
+  else if (motion === "fade") addWordAnimator(lyr, "Soft Fade", "ADBE Text Opacity", [0], exprEaseIn(times, 0.3));
+};
 
 const textAnimatorsOf = (lyr: any): any => p(p(lyr, "ADBE Text Properties"), "ADBE Text Animators");
 
@@ -323,38 +398,19 @@ const createCaptionLayer = (
       exprPop(times, 0.18)
     );
   }
-  if (style.animMode === "rotate") {
+  // Older callers only sent animMode; the three modes they could animate map 1:1.
+  const motion =
+    style.motion != null
+      ? style.motion
+      : style.animMode === "rotate" || style.animMode === "squash" || style.animMode === "wave"
+      ? style.animMode
+      : "none";
+  if (motion !== "none") {
     try {
-      addWordAnimator(
-        lyr,
-        "Rotate In",
-        "ADBE Text Rotation",
-        [-15],
-        exprRotate(times, 0.22)
-      );
-    } catch (eRot) {}
-  }
-  if (style.animMode === "squash") {
-    try {
-      addWordAnimator(
-        lyr,
-        "Squash & Stretch",
-        "ADBE Text Scale 3D",
-        [[130, 70, 100], [130, 70]],
-        exprPop(times, 0.2)
-      );
-    } catch (eSq) {}
-  }
-  if (style.animMode === "wave") {
-    try {
-      addWordAnimator(
-        lyr,
-        "Wave Ripple",
-        "ADBE Text Position 3D",
-        [[0, -18, 0], [0, -18]],
-        exprWave()
-      );
-    } catch (eWv) {}
+      addMotionAnimator(lyr, motion, times, style.size);
+    } catch (eMotion) {
+      // a motion AE can't apply on this build/font shouldn't cost the whole caption
+    }
   }
   if (style.reveal) {
     addWordAnimator(lyr, "Reveal (synced)", "ADBE Text Opacity", [0], exprHideUntilSpoken(times));

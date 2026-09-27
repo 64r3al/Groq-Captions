@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { evalTS } from "../lib/utils/bolt";
 import { resolveApiKey } from "../lib/services/apiKey";
 import { removeTempFile } from "../lib/services/ffmpeg";
@@ -24,6 +24,16 @@ import type {
   TranscriptWord,
 } from "../../shared/types";
 import { VIRAL_PRESETS, type ViralPreset } from "../../shared/presets";
+import { MOTION_OPTIONS, motionForAnimMode, type MotionType } from "../../shared/motion";
+import { cssFontFor } from "../../shared/fonts";
+import {
+  getCachedFonts,
+  getSavedFontOverride,
+  loadInstalledFonts,
+  saveFontOverride,
+  type FontList,
+} from "../lib/services/fonts";
+import { FontPicker } from "./features/FontPicker";
 import { PresetLibraryModal } from "./features/PresetLibraryModal";
 import { syncWords } from "../../shared/sync";
 import { buildGroups } from "../../shared/captions";
@@ -107,6 +117,38 @@ export const AppContent = () => {
   // Current active preset object
   const currentPreset = VIRAL_PRESETS.find((p) => p.id === selectedPresetId) || VIRAL_PRESETS[0];
 
+  // null = use the preset's own motion. Kinetic Motion presets and any override preview the
+  // exact motion After Effects will build; classic presets keep their bespoke preview looks.
+  const [motionOverride, setMotionOverride] = useState<MotionType | null>(null);
+  const effectiveMotion: MotionType = motionOverride ?? motionForAnimMode(currentPreset.animMode);
+  // Font: null = the preset's font. The choice sticks across presets and panel reloads.
+  const [fontOverride, setFontOverride] = useState<string | null>(() => getSavedFontOverride());
+  const [fontList, setFontList] = useState<FontList | null>(() => getCachedFonts());
+  const [fontsLoading, setFontsLoading] = useState(false);
+  const fontsRequested = useRef(false);
+  const effectiveFont = fontOverride ?? (currentPreset.font || DEFAULT_CAPTION_STYLE.font);
+  const previewFont = cssFontFor(effectiveFont, fontList?.fonts ?? []);
+
+  const refreshFonts = async () => {
+    fontsRequested.current = true;
+    setFontsLoading(true);
+    try {
+      setFontList(await loadInstalledFonts());
+    } finally {
+      setFontsLoading(false);
+    }
+  };
+  const ensureFonts = () => {
+    if (!fontsRequested.current) refreshFonts();
+  };
+  const chooseFont = (postScriptName: string | null) => {
+    setFontOverride(postScriptName);
+    saveFontOverride(postScriptName);
+  };
+
+  const previewMotionClass =
+    motionOverride || currentPreset.animMode.startsWith("motion:") ? `live-motion-${effectiveMotion}` : null;
+
   const refreshSelection = async (): Promise<SelectedAudioLayerInfo | null> => {
     setLoadingSelection(true);
     try {
@@ -152,6 +194,7 @@ export const AppContent = () => {
   // Handle Preset selection
   const applyPreset = (preset: ViralPreset) => {
     setSelectedPresetId(preset.id);
+    setMotionOverride(null);
     setFontSize(preset.fontSize);
     setWordsPerGroup(preset.wordsPerGroup);
     setBounceScale(preset.bounceScale);
@@ -305,7 +348,7 @@ export const AppContent = () => {
       if (!groups.length) throw new Error("No words fall inside the layer's in/out range.");
 
       const style: CaptionStyle = {
-        font: currentPreset.font || DEFAULT_CAPTION_STYLE.font,
+        font: effectiveFont,
         size: fontSize,
         textColor: hexToInt(baseColor) ?? DEFAULT_CAPTION_STYLE.textColor,
         highlightColor: hexToInt(highlightColor) ?? DEFAULT_CAPTION_STYLE.highlightColor,
@@ -317,6 +360,7 @@ export const AppContent = () => {
         pop: bounceScale > 0,
         bounceScale,
         yOffset,
+        motion: effectiveMotion,
         shadow: currentPreset.shadow ?? true,
         leadInFrames: DEFAULT_SYNC_OPTIONS.leadInFrames,
         animMode: currentPreset.animMode,
@@ -474,7 +518,7 @@ export const AppContent = () => {
                       Animation Presets Library
                     </h2>
                     <p className="font-label-xs text-label-xs text-on-surface-variant">
-                      50 Zero-Delay, Frame-Quantized After Effects Motion Styles
+                      {VIRAL_PRESETS.length} Zero-Delay, Frame-Quantized After Effects Motion Styles
                     </p>
                   </div>
                 </div>
@@ -508,7 +552,7 @@ export const AppContent = () => {
                   )}
                 </div>
 
-                <div className="flex items-center gap-space-xs overflow-x-auto no-scrollbar pt-0.5">
+                <div className="flex flex-wrap items-center gap-space-xs pt-0.5">
                   {[
                     "All",
                     "TikTok / Reels / Shorts",
@@ -516,11 +560,12 @@ export const AppContent = () => {
                     "AMV / Edits",
                     "Music Videos / Lyric Videos",
                     "Storytelling & Movie",
+                    "Kinetic Motion",
                   ].map((cat) => (
                     <button
                       key={cat}
                       onClick={() => setLibraryFilter(cat)}
-                      className={`px-space-sm py-1 rounded font-label-xs text-label-xs whitespace-nowrap transition-all cursor-pointer ${
+                      className={`shrink-0 px-space-sm py-1 rounded font-label-xs text-label-xs whitespace-nowrap transition-all cursor-pointer ${
                         libraryFilter === cat
                           ? "bg-primary text-on-primary font-bold shadow-xs"
                           : "bg-surface-container-high text-on-surface-variant hover:text-on-surface hover:bg-surface-variant"
@@ -735,9 +780,6 @@ export const AppContent = () => {
                       onChange={(e) => setLanguage(e.target.value)}
                       className="bg-transparent text-on-surface font-label-xs text-label-xs appearance-none outline-none cursor-pointer pr-4 truncate"
                     >
-                      <option value="Auto (EN)" className="bg-surface-container text-on-surface">
-                        Auto (EN)
-                      </option>
                       {LANGUAGE_OPTIONS.map((opt) => (
                         <option key={opt.value} value={opt.value} className="bg-surface-container text-on-surface">
                           {opt.label}
@@ -871,8 +913,15 @@ export const AppContent = () => {
 
                 {/* CENTERSTAGE CAPTION: Word-by-Word Kinetic Display with Active Preset Styling */}
                 <div
-                  className="relative z-10 my-auto flex flex-col items-center justify-center text-center px-space-sm pointer-events-none transition-transform duration-200 w-full"
-                  style={{ transform: `translateY(${yOffset / 8}px)` }}
+                  className="pca-font-scope relative z-10 my-auto flex flex-col items-center justify-center text-center px-space-sm pointer-events-none transition-transform duration-200 w-full"
+                  style={
+                    {
+                      transform: `translateY(${yOffset / 8}px)`,
+                      "--pca-font-family": previewFont.fontFamily,
+                      "--pca-font-weight": previewFont.fontWeight,
+                      "--pca-font-style": previewFont.fontStyle,
+                    } as CSSProperties
+                  }
                 >
                   {/* Preset Contextual Containers: Reddit, Tweet, Terminal, Search, Sticky Note, Newspaper, etc. */}
                   {currentPreset.animMode === "reddit" && (
@@ -1014,7 +1063,7 @@ export const AppContent = () => {
                       >
                         <span
                           key={`single-${currentPreset.id}-${activeWordIndex}`}
-                          className={`font-black uppercase tracking-tight block live-anim-node ${
+                          className={`font-black uppercase tracking-tight block live-anim-node ${previewMotionClass ?? (
                             currentPreset.animMode === "rotate"
                               ? "live-anim-rotate"
                               : currentPreset.animMode === "squash"
@@ -1037,7 +1086,7 @@ export const AppContent = () => {
                               ? "live-anim-impact"
                               : currentPreset.animMode === "time-skip"
                               ? "live-anim-time-skip"
-                              : currentPreset.animMode === "letter-scatter"
+                              : currentPreset.animMode === "scatter"
                               ? "live-anim-scatter"
                               : currentPreset.animMode === "lens-distort"
                               ? "live-anim-lens-distort"
@@ -1045,11 +1094,11 @@ export const AppContent = () => {
                               ? "live-anim-datamosh"
                               : currentPreset.animMode === "graffiti"
                               ? "live-anim-graffiti"
-                              : currentPreset.animMode === "word-rain"
+                              : currentPreset.animMode === "rain"
                               ? "live-anim-rain"
-                              : currentPreset.animMode === "invert-flash"
+                              : currentPreset.animMode === "invert"
                               ? "live-anim-invert-flash"
-                              : currentPreset.animMode === "circle-rotate"
+                              : currentPreset.animMode === "circle"
                               ? "live-anim-circle-rotate"
                               : currentPreset.animMode === "echo"
                               ? "live-anim-echo"
@@ -1059,7 +1108,7 @@ export const AppContent = () => {
                               ? "live-anim-crawl"
                               : currentPreset.animMode === "thought"
                               ? "live-anim-thought"
-                              : "live-anim-single-word"
+                              : "live-anim-single-word")
                           }`}
                           style={{
                             color:
@@ -1149,7 +1198,7 @@ export const AppContent = () => {
                               >
                                 <span
                                   key={`active-word-${currentPreset.id}-${globalIdx}`}
-                                  className={`px-1.5 py-0.5 rounded tracking-tight font-black uppercase live-anim-node ${
+                                  className={`px-1.5 py-0.5 rounded tracking-tight font-black uppercase live-anim-node ${previewMotionClass ?? (
                                     currentPreset.animMode === "rotate"
                                       ? "live-anim-rotate"
                                       : currentPreset.animMode === "squash"
@@ -1182,7 +1231,7 @@ export const AppContent = () => {
                                       ? "live-anim-impact"
                                       : currentPreset.animMode === "time-skip"
                                       ? "live-anim-time-skip"
-                                      : currentPreset.animMode === "letter-scatter"
+                                      : currentPreset.animMode === "scatter"
                                       ? "live-anim-scatter"
                                       : currentPreset.animMode === "lens-distort"
                                       ? "live-anim-lens-distort"
@@ -1190,13 +1239,13 @@ export const AppContent = () => {
                                       ? "live-anim-datamosh"
                                       : currentPreset.animMode === "graffiti"
                                       ? "live-anim-graffiti"
-                                      : currentPreset.animMode === "word-rain"
+                                      : currentPreset.animMode === "rain"
                                       ? "live-anim-rain"
-                                      : currentPreset.animMode === "invert-flash"
+                                      : currentPreset.animMode === "invert"
                                       ? "live-anim-invert-flash"
-                                      : currentPreset.animMode === "circle-rotate"
+                                      : currentPreset.animMode === "circle"
                                       ? "live-anim-circle-rotate"
-                                      : "live-anim-pop"
+                                      : "live-anim-pop")
                                   }`}
                                   style={{
                                     color:
@@ -1288,7 +1337,7 @@ export const AppContent = () => {
                   )}
 
                   {/* Subtitle Tracking Anchor Telemetry Indicator */}
-                  <div className="mt-space-md flex items-center gap-space-xs opacity-75">
+                  <div className="pca-font-ignore mt-space-md flex items-center gap-space-xs opacity-75">
                     <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span>
                     <span className="font-label-xs text-label-xs text-on-surface-variant font-mono">
                       #{currentPreset.num} {currentPreset.name} • {currentPreset.tag} • Y: {yOffset}px
@@ -1439,6 +1488,40 @@ export const AppContent = () => {
 
               {/* Parameter Scrubbers Table */}
               <div className="flex flex-col gap-space-xs mt-0.5">
+                {/* Animation (motion) Parameter */}
+                <div className="flex items-center justify-between gap-space-sm bg-surface-container-lowest px-space-sm py-1 rounded min-h-[36px]">
+                  <div className="flex items-center gap-space-xs min-w-0">
+                    <span className="material-symbols-outlined text-[15px] text-on-surface-variant">animation</span>
+                    <span className="font-body-sm text-body-sm text-on-surface">Animation</span>
+                  </div>
+                  <select
+                    value={motionOverride ?? ""}
+                    onChange={(e) => setMotionOverride(e.target.value ? (e.target.value as MotionType) : null)}
+                    className="h-7 min-w-[150px] bg-surface-container-high text-on-surface font-label-sm text-label-sm rounded px-space-sm cursor-pointer border border-outline-variant/40 focus:border-primary outline-none"
+                    title="Motion used in the preview and in After Effects"
+                  >
+                    <option value="">
+                      Preset: {MOTION_OPTIONS.find((o) => o.value === motionForAnimMode(currentPreset.animMode))?.label}
+                    </option>
+                    {MOTION_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <FontPicker
+                  value={fontOverride}
+                  presetFont={currentPreset.font || DEFAULT_CAPTION_STYLE.font}
+                  fonts={fontList?.fonts ?? []}
+                  source={fontList?.source ?? null}
+                  loading={fontsLoading}
+                  onOpen={ensureFonts}
+                  onChange={chooseFont}
+                  onRefresh={refreshFonts}
+                />
+
                 {/* Font Size Parameter */}
                 <div className="flex items-center justify-between bg-surface-container-lowest px-space-sm py-1 rounded">
                   <div className="flex items-center gap-space-xs min-w-0">
@@ -1535,7 +1618,7 @@ export const AppContent = () => {
 
               {/* Dual Color Swatches */}
               <div className="grid grid-cols-2 gap-space-xs mt-space-xs">
-                <div className="flex items-center justify-between bg-surface-container-lowest p-space-xs rounded cursor-pointer hover:bg-surface-container-low transition-colors">
+                <label className="relative flex items-center justify-between min-h-[36px] bg-surface-container-lowest px-space-sm rounded cursor-pointer hover:bg-surface-container-low transition-colors">
                   <div className="flex items-center gap-space-xs min-w-0">
                     <span
                       className="w-4 h-4 rounded-sm shadow-xs border border-outline-variant/30"
@@ -1547,12 +1630,12 @@ export const AppContent = () => {
                     type="color"
                     value={baseColor}
                     onChange={(e) => setBaseColor(e.target.value)}
-                    className="w-4 h-4 opacity-0 absolute cursor-pointer"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   />
                   <span className="font-label-xs text-label-xs text-on-surface-variant font-mono">{baseColor}</span>
-                </div>
+                </label>
 
-                <div className="flex items-center justify-between bg-surface-container-lowest p-space-xs rounded cursor-pointer hover:bg-surface-container-low transition-colors">
+                <label className="relative flex items-center justify-between min-h-[36px] bg-surface-container-lowest px-space-sm rounded cursor-pointer hover:bg-surface-container-low transition-colors">
                   <div className="flex items-center gap-space-xs min-w-0">
                     <span
                       className="w-4 h-4 rounded-sm shadow-xs border border-outline-variant/30"
@@ -1564,12 +1647,12 @@ export const AppContent = () => {
                     type="color"
                     value={highlightColor}
                     onChange={(e) => setHighlightColor(e.target.value)}
-                    className="w-4 h-4 opacity-0 absolute cursor-pointer"
+                    className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
                   />
                   <span className="font-label-xs text-label-xs text-secondary font-mono font-semibold">
                     {highlightColor}
                   </span>
-                </div>
+                </label>
               </div>
 
               {/* Pro Sync Automation Toggles */}

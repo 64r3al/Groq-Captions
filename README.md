@@ -3,8 +3,8 @@
 > AI transcription and animated, word-synced captions for Adobe After Effects.
 
 Pro Caption AE is an After Effects panel that transcribes the audio in your comp with Groq's
-Whisper API and builds frame-accurate, animated caption layers from it, styled with one of 50
-presets built for short-form video.
+Whisper API and builds frame-accurate, animated caption layers from it, styled with one of 66
+presets built for short-form video, in any font installed on your machine.
 
 ## Install
 
@@ -19,8 +19,10 @@ Requires After Effects 2024 (v24) or newer and FFmpeg. See [INSTALLATION.md](./I
 1. In your comp, select the audio (or video) layer you want captioned.
 2. **Transcribe** tab: pick the model and language, optionally add glossary words (names, brands,
    jargon) so they're spelled right, then click **Transcribe**.
-3. **Style & Animation** tab: pick a preset and adjust size, words per group, bounce, colors and
-   vertical position. The live preview updates as you go.
+3. Pick a preset from the tray under the live preview, or browse all of them in the
+   **Style & Animation** tab. In the **Kinetic Inspector** below the tray you can swap the
+   **Animation** (15 motion types), pick any installed **Font**, and adjust size, words per group,
+   bounce, colors and vertical position. The live preview updates as you go.
 4. Click **Build in AE**. The captions are added as text layers in a `Captions - <comp name>`
    precomp, in a single undo step.
 
@@ -30,8 +32,12 @@ Requires After Effects 2024 (v24) or newer and FFmpeg. See [INSTALLATION.md](./I
 - **Long audio** is split into overlapping chunks automatically and stitched back together.
 - **Onset refinement** nudges each word onto the actual start of the sound in your audio.
 - **Frame-quantized timing** that respects the layer's start time, trim, and time stretch.
-- **50 animation presets** for TikTok/Reels, YouTube, AMV, music and storytelling edits, plus
-  word highlight, pop, reveal and drop shadow.
+- **66 presets** for TikTok/Reels, YouTube, AMV, music, storytelling and a Kinetic Motion pack,
+  plus word highlight, pop, reveal and drop shadow.
+- **15 motion types** built as real After Effects text animators: slide up, drop in, side slide,
+  grow, slam, blur focus, letter spread, skew, tilt, spin, squash, wave, shake, fade, hard cut.
+- **Your fonts:** the font picker lists every font installed on your machine (After Effects
+  2024+), previews each one in its own typeface, and remembers your choice.
 - **Editable output:** normal After Effects text layers driven by expressions.
 - **Bring your own key:** your Groq key is stored encrypted in your user profile, never in the project.
 

@@ -4,6 +4,7 @@
 // window.cep (the real CEP Node bridge) is absent - inside After Effects this is always a
 // no-op, so nothing here can affect the packaged extension's behavior.
 import { ns } from "../../../shared/shared";
+import { FALLBACK_FONTS, type FontInfo } from "../../../shared/fonts";
 import type {
   BuildCaptionsResult,
   CaptionGroupData,
@@ -45,6 +46,14 @@ let buildCount = 0;
 const MOCK_HANDLERS: Record<string, (...args: any[]) => unknown> = {
   getSelectedAudioLayerInfo: () => MOCK_SELECTION,
   pickFfmpegExecutable: () => null,
+  listFonts: (): FontInfo[] => [
+    ...FALLBACK_FONTS,
+    { postScriptName: "Georgia-Italic", family: "Georgia", style: "Italic" },
+    { postScriptName: "Verdana", family: "Verdana", style: "Regular" },
+    { postScriptName: "DejaVuSans-Bold", family: "DejaVu Sans", style: "Bold" },
+    { postScriptName: "DejaVuSerif", family: "DejaVu Serif", style: "Regular" },
+    { postScriptName: "DejaVuSansMono", family: "DejaVu Sans Mono", style: "Regular" },
+  ],
   buildCaptions: (_compId: number, groups: CaptionGroupData[], _style: CaptionStyle): BuildCaptionsResult => {
     buildCount += 1;
     return {

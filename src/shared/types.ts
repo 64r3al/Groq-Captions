@@ -85,7 +85,8 @@ export type PresetCategory =
   | "YouTube"
   | "AMV / Edits"
   | "Music Videos / Lyric Videos"
-  | "Storytelling & Movie";
+  | "Storytelling & Movie"
+  | "Kinetic Motion";
 
 /** Style + animation toggles for buildCaptions. Colors are 0xRRGGBB ints (never negative,
  * always JSON-safe) rather than AE's native [0-1,0-1,0-1] float triples, so the panel's color
@@ -110,10 +111,20 @@ export interface CaptionStyle {
   bounceScale?: number;
   /** Vertical nudge in px, relative to a 1920px-tall frame. */
   yOffset?: number;
+  /** Entry/emphasis motion (see shared/motion.ts). */
+  motion?: string;
 }
 
 export interface BuildCaptionsResult {
   words: number;
   captions: number;
   precompName: string;
+}
+
+/** A font installed on the user's machine, as After Effects reports it. `postScriptName` is
+ * what TextDocument.font needs; family/style drive the panel preview and the picker. */
+export interface FontInfo {
+  postScriptName: string;
+  family: string;
+  style: string;
 }
