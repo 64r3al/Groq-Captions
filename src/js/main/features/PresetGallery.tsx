@@ -1,4 +1,4 @@
-import { intToHex } from "../ui/color";
+import { intToHex } from "../ui";
 import type { CaptionStyle } from "../../../shared/types";
 
 export type StylePreset = {
