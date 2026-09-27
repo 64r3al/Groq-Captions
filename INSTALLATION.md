@@ -1,123 +1,56 @@
-# Pro Caption AE Installation Guide
+# Installing Pro Caption AE
 
-## System Requirements
-- **Adobe After Effects**: 2024 or later (v24.0+)
-- **Operating System**: Windows or macOS
-- **Memory**: 2GB RAM minimum
-- **Disk Space**: 500MB for extension + dependencies
+## Requirements
 
-## Installation Methods
+- Adobe After Effects 2024 (v24.0) or newer, on Windows or macOS
+- [FFmpeg](https://ffmpeg.org/download.html) installed (used to extract audio from your comp)
+- A free [Groq API key](https://console.groq.com/keys)
 
-### Method 1: Drag & Drop Installation (Recommended - Easiest)
-This is the simplest way to install Pro Caption AE directly into After Effects.
+## 1. Install the extension
 
-1. **Download** the `.zxp` file from [GitHub Releases](https://github.com/64r3al/Pro-Caption-AE/releases)
-2. **Locate** your After Effects installation folder:
-   - **Windows**: `C:\Program Files\Adobe\Adobe After Effects [VERSION]\`
-   - **macOS**: `/Applications/Adobe After Effects [VERSION]/`
-3. **Drag** the `.zxp` file into the After Effects window
-4. **Accept** the installation prompt
-5. **Restart** After Effects
-6. Go to **Window → Extensions → Pro Caption AE** to open the panel
+1. Download `Pro-Caption-AE_<version>.zxp` from the [latest release](https://github.com/64r3al/Pro-Caption-AE/releases/latest).
+2. Download and open the free **[ZXP/UXP Installer](https://aescripts.com/learn/zxp-installer/)** by aescripts + aeplugins.
+3. Drag the `.zxp` file onto the installer window (or use **File → Open**) and wait for the success message.
+4. Restart After Effects.
+5. Open the panel from **Window → Extensions → Pro Caption AE**.
 
-### Method 2: Adobe Extension Manager (Alternative)
+Dragging the `.zxp` into After Effects itself does not install it; use the installer above.
 
-**Windows:**
-1. Download and install [Adobe Extension Manager](https://exchange.adobe.com/extensionmanager/)
-2. Open Extension Manager
-3. Click **Install Extension**
-4. Navigate to the `.zxp` file you downloaded
-5. Click **Install**
-6. Restart After Effects
+## 2. Install FFmpeg
 
-**macOS:**
-1. Install via Homebrew: `brew install adobe-extension-manager`
-2. Or download from [Adobe Exchange](https://exchange.adobe.com/)
-3. Follow the same steps as Windows above
+The panel finds FFmpeg automatically if it is on your `PATH` or in a common install location.
 
-### Method 3: Manual Installation (Advanced)
+- **Windows:** `winget install Gyan.FFmpeg` (or `scoop install ffmpeg`)
+- **macOS:** `brew install ffmpeg`
 
-**Windows:**
-```bash
-# Copy the ZXP to After Effects extensions folder
-xcopy "Pro-Caption-AE_1.0.0.zxp" "C:\Program Files\Adobe\Adobe After Effects [VERSION]\Support Files\Extensions\"
-```
+If it is installed somewhere else, set its path in the panel's Settings.
 
-**macOS:**
-```bash
-# Copy the ZXP to After Effects extensions folder
-cp "Pro-Caption-AE_1.0.0.zxp" "/Applications/Adobe After Effects [VERSION]/Contents/Resources/Extensions/"
-```
+## 3. Add your Groq API key
 
-Then restart After Effects.
+1. Create a key at [console.groq.com/keys](https://console.groq.com/keys).
+2. In the panel, click the gear icon to open **Settings**.
+3. Paste the key under **Groq API key**, save, and use **Test** to confirm it works.
 
-## First-Time Setup
-
-After installation, you'll need to configure your Groq API key:
-
-1. **Open** Pro Caption AE from `Window → Extensions → Pro Caption AE`
-2. **Click** the Settings icon (⚙️) in the top right
-3. **Paste** your [Groq API key](https://console.groq.com/)
-4. **Save** your settings
-5. **Start** transcribing!
+The key is stored locally on your machine, per user.
 
 ## Troubleshooting
 
-### Extension doesn't appear after installation
-- ✓ Restart After Effects completely
-- ✓ Check your After Effects version is 2024 or later
-- ✓ Ensure the `.zxp` file is not corrupted
+- **Panel missing from Window → Extensions:** fully quit and reopen After Effects, and confirm you are on v24 or newer.
+- **Installer reports a signature error:** re-download the `.zxp` from the release page; a partially downloaded file fails verification.
+- **"FFmpeg not found":** install it as above, or set its path in Settings.
+- Anything else: [open an issue](https://github.com/64r3al/Pro-Caption-AE/issues) with your OS, After Effects version, and the error text.
 
-### "Extension not signed" error
-- This is normal for development versions
-- Click "Install anyway" or add to trusted extensions
-- Production releases are properly signed
+## Uninstall
 
-### Transcription not working
-- ✓ Verify your Groq API key is valid
-- ✓ Check your internet connection
-- ✓ Ensure you have sufficient API credits
+Open ZXP/UXP Installer, select Pro Caption AE in its list of installed extensions, and remove it.
 
-### Still having issues?
-- [Open an issue](https://github.com/64r3al/Pro-Caption-AE/issues)
-- Include your OS, After Effects version, and error message
+## Building the ZXP yourself
 
-## Uninstallation
+Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds and signs the ZXP on a Windows runner and attaches it to the release. To attach a ZXP to an existing release, run that workflow manually from the Actions tab with the tag name.
 
-**Windows:**
-1. Go to `C:\Program Files\Adobe\Adobe After Effects [VERSION]\Support Files\Extensions\`
-2. Delete the `pro-caption-ae` folder
-3. Restart After Effects
+Locally (Windows or macOS only, since Adobe's signing tool is not available for Linux):
 
-**macOS:**
-1. Go to `/Applications/Adobe After Effects [VERSION]/Contents/Resources/Extensions/`
-2. Delete the `pro-caption-ae` folder
-3. Restart After Effects
-
-## What Gets Installed
-
-- ✓ Main Pro Caption AE extension panel
-- ✓ Transcription engine (powered by Groq)
-- ✓ 65+ animation presets
-- ✓ Configuration and settings storage
-- ✓ Support libraries and dependencies
-
-**Installation size**: ~150-200MB (including After Effects compatibility files)
-
-## Auto-Updates
-
-Pro Caption AE checks for updates on startup. When a new version is available:
-1. A notification appears in the panel
-2. Click "Update Now" to download the latest version
-3. Follow the installation steps above with the new `.zxp` file
-
-## Getting Help
-
-- **Documentation**: Check the [GitHub Wiki](https://github.com/64r3al/Pro-Caption-AE/wiki)
-- **Issues**: [Report a bug](https://github.com/64r3al/Pro-Caption-AE/issues)
-- **Discussions**: [Join the community](https://github.com/64r3al/Pro-Caption-AE/discussions)
-
----
-
-**Version**: 1.0.0  
-**Last Updated**: September 27, 2026
+```bash
+npm install
+ZXP_PASSWORD=any-throwaway-value npm run zxp   # output: dist/zxp/com.procaptionae.panel.zxp
+```
